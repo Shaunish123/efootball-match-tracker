@@ -116,9 +116,9 @@ export default function MatchesPage() {
         <p className="text-text-secondary mt-1 text-sm">Record a match result and update stats across all leaderboards</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 items-start">
         {/* Match Form */}
-        <div className="lg:col-span-2 card-glow p-6">
+        <div className="lg:col-span-2 card-glow p-6 h-fit">
           <form onSubmit={handleSubmit} className="space-y-5">
             {/* Match Mode Selector (Dream vs Auth) */}
             <div>
@@ -333,7 +333,7 @@ export default function MatchesPage() {
         </div>
 
         {/* Match History */}
-        <div className="lg:col-span-3 card-glow p-0 overflow-hidden">
+        <div className="lg:col-span-3 card-glow p-0 overflow-hidden flex flex-col">
           <div className="p-5 border-b border-border flex items-center justify-between">
             <h2 className="font-heading font-bold text-lg uppercase tracking-wide accent-bar">
               Match History
@@ -346,7 +346,7 @@ export default function MatchesPage() {
               <p className="text-text-muted text-sm">No matches logged yet. Record your first match!</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
               <table className="table-gaming">
                 <thead>
                   <tr>
