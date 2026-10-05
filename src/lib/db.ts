@@ -458,6 +458,76 @@ export async function logMatch(matchData: {
   return newRef.key!;
 }
 
+// Helper to sanitize and auto-heal tournament bracket data (recomputes thirdPlace & final slots from SF winners/losers if needed)
+function sanitizeTournamentData(t: Tournament): Tournament {
+  if (!t.bracket) return t;
+
+  const bracket = { ...t.bracket };
+  let needsDbUpdate = false;
+  const updates: Record<string, unknown> = {};
+
+  if (bracket.semiFinals && bracket.semiFinals.length === 2) {
+    const sf0 = bracket.semiFinals[0];
+    const sf1 = bracket.semiFinals[1];
+
+    if (sf0.completed && sf1.completed && sf0.winnerId && sf1.winnerId) {
+      const sf0WinnerId = sf0.winnerId;
+      const sf0LoserId = sf0WinnerId === sf0.player1Id ? sf0.player2Id : sf0.player1Id;
+      const sf0WinnerName = sf0WinnerId === sf0.player1Id ? sf0.player1Name : sf0.player2Name;
+      const sf0LoserName = sf0LoserId === sf0.player1Id ? sf0.player1Name : sf0.player2Name;
+
+      const sf1WinnerId = sf1.winnerId;
+      const sf1LoserId = sf1WinnerId === sf1.player1Id ? sf1.player2Id : sf1.player1Id;
+      const sf1WinnerName = sf1WinnerId === sf1.player1Id ? sf1.player1Name : sf1.player2Name;
+      const sf1LoserName = sf1LoserId === sf1.player1Id ? sf1.player1Name : sf1.player2Name;
+
+      // Heal Final match slot if not completed
+      if (!bracket.final.completed) {
+        if (
+          bracket.final.player1Id !== sf0WinnerId ||
+          bracket.final.player2Id !== sf1WinnerId
+        ) {
+          bracket.final = {
+            ...bracket.final,
+            player1Id: sf0WinnerId,
+            player1Name: sf0WinnerName,
+            player2Id: sf1WinnerId,
+            player2Name: sf1WinnerName,
+          };
+          updates[`tournaments/${t.id}/bracket/final`] = bracket.final;
+          needsDbUpdate = true;
+        }
+      }
+
+      // Heal 3rd Place match slot if not completed
+      if (!bracket.thirdPlace.completed) {
+        if (
+          bracket.thirdPlace.player1Id !== sf0LoserId ||
+          bracket.thirdPlace.player2Id !== sf1LoserId
+        ) {
+          bracket.thirdPlace = {
+            ...bracket.thirdPlace,
+            player1Id: sf0LoserId,
+            player1Name: sf0LoserName,
+            player2Id: sf1LoserId,
+            player2Name: sf1LoserName,
+          };
+          updates[`tournaments/${t.id}/bracket/thirdPlace`] = bracket.thirdPlace;
+          needsDbUpdate = true;
+        }
+      }
+    }
+  }
+
+  if (needsDbUpdate) {
+    update(ref(db), updates).catch((err) =>
+      console.warn('Auto-heal tournament update error:', err)
+    );
+  }
+
+  return { ...t, bracket };
+}
+
 // ==================== TOURNAMENT OPERATIONS ====================
 
 export function subscribeToTournaments(callback: (tournaments: Tournament[]) => void) {
@@ -471,11 +541,14 @@ export function subscribeToTournaments(callback: (tournaments: Tournament[]) => 
         return;
       }
       const tournaments: Tournament[] = Object.keys(data)
-        .map((key) => ({
-          ...data[key],
-          id: key,
-          matchType: data[key].matchType || 'dream',
-        }))
+        .map((key) => {
+          const raw = {
+            ...data[key],
+            id: key,
+            matchType: data[key].matchType || 'dream',
+          };
+          return sanitizeTournamentData(raw);
+        })
         .sort((a, b) => b.createdAt - a.createdAt);
       callback(tournaments);
     },
@@ -500,11 +573,12 @@ export function subscribeToTournament(
         return;
       }
       const data = snapshot.val();
-      callback({
+      const raw: Tournament = {
         ...data,
         id: tournamentId,
         matchType: data.matchType || 'dream',
-      });
+      };
+      callback(sanitizeTournamentData(raw));
     },
     (error) => {
       console.warn('Firebase subscribeToTournament error:', error);
@@ -724,7 +798,7 @@ export async function submitTournamentMatchResult(
         player1Id: updatedSF[0].loserId,
         player2Id: updatedSF[1].loserId,
         player1Name: updatedSF[0].loserId === updatedSF[0].player1Id ? updatedSF[0].player1Name : updatedSF[0].player2Name,
-        player2Name: updatedSF[1].loserId === updatedSF[1].player1Id ? updatedSF[1].player2Name : updatedSF[1].player2Name,
+        player2Name: updatedSF[1].loserId === updatedSF[1].player1Id ? updatedSF[1].player1Name : updatedSF[1].player2Name,
         matchType,
         completed: false,
       };
