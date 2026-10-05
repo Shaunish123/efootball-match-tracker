@@ -350,63 +350,74 @@ export default function MatchesPage() {
               <table className="table-gaming">
                 <thead>
                   <tr>
-                    <th>Players</th>
+                    <th>Matchup</th>
                     <th className="text-center">Score</th>
-                    <th>Result / Winner</th>
+                    <th>Outcome</th>
                     <th className="text-center">Mode</th>
                     <th className="text-center">Type</th>
                     <th>Date</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {matches.map((match) => (
-                    <tr key={match.id}>
-                      <td>
-                        <span className="font-heading font-semibold text-sm">
-                          {match.player1Name} <span className="text-text-muted">vs</span> {match.player2Name}
-                        </span>
-                      </td>
-                      <td className="text-center">
-                        <span className="font-heading font-black text-lg">
-                          {match.player1Score} - {match.player2Score}
-                        </span>
-                        {match.isPenalty && match.penaltyScore1 !== undefined && (
-                          <span className="block text-xs text-cyan">
-                            ({match.penaltyScore1} - {match.penaltyScore2} pen)
+                  {matches.map((match) => {
+                    const isP1Winner = !match.isDraw && match.winnerId === match.player1Id;
+                    const isP2Winner = !match.isDraw && match.winnerId === match.player2Id;
+
+                    return (
+                      <tr key={match.id}>
+                        <td>
+                          <div className="flex items-center gap-1.5 font-heading text-sm">
+                            <span className={isP1Winner ? 'text-volt font-bold' : 'text-text-primary'}>
+                              {match.player1Name}
+                            </span>
+                            <span className="text-text-muted text-xs font-normal px-1">vs</span>
+                            <span className={isP2Winner ? 'text-volt font-bold' : 'text-text-primary'}>
+                              {match.player2Name}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="text-center">
+                          <span className="font-heading font-black text-lg">
+                            {match.player1Score} - {match.player2Score}
                           </span>
-                        )}
-                      </td>
-                      <td>
-                        {match.isDraw ? (
-                          <span className="text-amber-400 font-heading font-semibold text-xs px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/20">
-                            DRAW (1pt each)
+                          {match.isPenalty && match.penaltyScore1 !== undefined && (
+                            <span className="block text-xs text-cyan">
+                              ({match.penaltyScore1} - {match.penaltyScore2} pen)
+                            </span>
+                          )}
+                        </td>
+                        <td>
+                          {match.isDraw ? (
+                            <span className="inline-flex items-center gap-1 text-amber-400 font-heading font-semibold text-xs px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/20">
+                              <span>🤝</span> Draw (+1)
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-volt font-heading font-bold text-xs px-2.5 py-1 rounded-md bg-volt/10 border border-volt/25">
+                              <span>👑</span> {match.winnerName} (+3)
+                            </span>
+                          )}
+                        </td>
+                        <td className="text-center">
+                          <span className={`px-2 py-0.5 rounded text-[0.6rem] font-heading font-bold uppercase tracking-wider ${
+                            match.matchType === 'auth' ? 'bg-purple-500/15 text-purple-400 border border-purple-500/30' : 'bg-cyan/15 text-cyan border border-cyan/30'
+                          }`}>
+                            {match.matchType === 'auth' ? 'AUTH' : 'DREAM'}
                           </span>
-                        ) : (
-                          <span className="text-volt font-heading font-semibold text-sm">
-                            {match.winnerName}
-                          </span>
-                        )}
-                      </td>
-                      <td className="text-center">
-                        <span className={`px-2 py-0.5 rounded text-[0.6rem] font-heading font-bold uppercase tracking-wider ${
-                          match.matchType === 'auth' ? 'bg-purple-500/15 text-purple-400 border border-purple-500/30' : 'bg-cyan/15 text-cyan border border-cyan/30'
-                        }`}>
-                          {match.matchType === 'auth' ? 'AUTH' : 'DREAM'}
-                        </span>
-                      </td>
-                      <td className="text-center">
-                        <div className="flex justify-center gap-1">
-                          {match.isDraw && <span className="badge badge-loss text-[0.6rem] bg-amber-500/15 text-amber-400 border-amber-500/30">DRAW</span>}
-                          {match.isPenalty && <span className="badge badge-penalty text-[0.6rem]">PEN</span>}
-                          {match.tournamentId && <span className="badge badge-tournament text-[0.6rem]">CUP</span>}
-                          {!match.isDraw && !match.isPenalty && !match.tournamentId && <span className="text-text-muted text-xs">REG</span>}
-                        </div>
-                      </td>
-                      <td className="text-text-secondary text-xs">
-                        {new Date(match.createdAt).toLocaleDateString()}
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="text-center">
+                          <div className="flex justify-center gap-1">
+                            {match.isDraw && <span className="badge badge-loss text-[0.6rem] bg-amber-500/15 text-amber-400 border-amber-500/30">DRAW</span>}
+                            {match.isPenalty && <span className="badge badge-penalty text-[0.6rem]">PEN</span>}
+                            {match.tournamentId && <span className="badge badge-tournament text-[0.6rem]">CUP</span>}
+                            {!match.isDraw && !match.isPenalty && !match.tournamentId && <span className="text-text-muted text-xs">REG</span>}
+                          </div>
+                        </td>
+                        <td className="text-text-secondary text-xs">
+                          {new Date(match.createdAt).toLocaleDateString()}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
