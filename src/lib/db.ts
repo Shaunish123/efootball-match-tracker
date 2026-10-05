@@ -309,19 +309,34 @@ export function subscribeToMatches(callback: (matches: Match[]) => void) {
   const matchesRef = ref(db, 'matches');
   const unsubscribe = onValue(
     matchesRef,
-    (snapshot: DataSnapshot) => {
+    async (snapshot: DataSnapshot) => {
       const data = snapshot.val();
       if (!data) {
         callback([]);
         return;
       }
+      const usersSnap = await get(ref(db, 'users'));
+      const usersData = usersSnap.exists() ? usersSnap.val() : {};
+
       const matches: Match[] = Object.keys(data)
-        .map((key) => ({
-          ...data[key],
-          id: key,
-          matchType: data[key].matchType || 'dream',
-          isDraw: !!data[key].isDraw,
-        }))
+        .map((key) => {
+          const item = data[key];
+          const p1Name = usersData[item.player1Id]?.displayName || item.player1Name;
+          const p2Name = usersData[item.player2Id]?.displayName || item.player2Name;
+          const winnerName = item.winnerId ? (usersData[item.winnerId]?.displayName || item.winnerName) : undefined;
+          const loserName = item.loserId ? (usersData[item.loserId]?.displayName || item.loserName) : undefined;
+
+          return {
+            ...item,
+            id: key,
+            player1Name: p1Name,
+            player2Name: p2Name,
+            winnerName,
+            loserName,
+            matchType: item.matchType || 'dream',
+            isDraw: !!item.isDraw,
+          };
+        })
         .sort((a, b) => b.createdAt - a.createdAt);
       callback(matches);
     },
@@ -337,19 +352,34 @@ export function subscribeToUserMatches(userId: string, callback: (matches: Match
   const matchesRef = ref(db, 'matches');
   const unsubscribe = onValue(
     matchesRef,
-    (snapshot: DataSnapshot) => {
+    async (snapshot: DataSnapshot) => {
       const data = snapshot.val();
       if (!data) {
         callback([]);
         return;
       }
+      const usersSnap = await get(ref(db, 'users'));
+      const usersData = usersSnap.exists() ? usersSnap.val() : {};
+
       const matches: Match[] = Object.keys(data)
-        .map((key) => ({
-          ...data[key],
-          id: key,
-          matchType: data[key].matchType || 'dream',
-          isDraw: !!data[key].isDraw,
-        }))
+        .map((key) => {
+          const item = data[key];
+          const p1Name = usersData[item.player1Id]?.displayName || item.player1Name;
+          const p2Name = usersData[item.player2Id]?.displayName || item.player2Name;
+          const winnerName = item.winnerId ? (usersData[item.winnerId]?.displayName || item.winnerName) : undefined;
+          const loserName = item.loserId ? (usersData[item.loserId]?.displayName || item.loserName) : undefined;
+
+          return {
+            ...item,
+            id: key,
+            player1Name: p1Name,
+            player2Name: p2Name,
+            winnerName,
+            loserName,
+            matchType: item.matchType || 'dream',
+            isDraw: !!item.isDraw,
+          };
+        })
         .filter((m) => m.player1Id === userId || m.player2Id === userId)
         .sort((a, b) => b.createdAt - a.createdAt);
       callback(matches);
