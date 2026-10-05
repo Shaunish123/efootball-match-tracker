@@ -2,7 +2,7 @@
 
 import { useEffect, useState, use } from 'react';
 import { subscribeToUsers, subscribeToH2H, subscribeToUserMatches } from '@/lib/db';
-import { User, Match, H2HRecord } from '@/lib/types';
+import { User, Match, H2HRecord, MatchType, ModeStats } from '@/lib/types';
 import Link from 'next/link';
 import ActivityChart from '@/components/ActivityChart';
 
@@ -13,9 +13,12 @@ export default function UserProfilePage({ params }: { params: Promise<{ id: stri
   const [matches, setMatches] = useState<Match[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Tab selections
+  const [statsMode, setStatsMode] = useState<'combined' | MatchType>('combined');
+  const [h2hMode, setH2hMode] = useState<'combined' | MatchType>('combined');
+
   useEffect(() => {
     const timer = setTimeout(() => setLoading(false), 2000);
-    // Subscribe to users to find current user
     const unsub1 = subscribeToUsers((users) => {
       const found = users.find((u) => u.id === userId);
       setUser(found || null);
@@ -57,35 +60,69 @@ export default function UserProfilePage({ params }: { params: Promise<{ id: stri
     );
   }
 
-  const winRate = user.matchesPlayed > 0
-    ? ((user.wins / user.matchesPlayed) * 100).toFixed(1)
+  // Get active stats depending on statsMode
+  const activeStats: ModeStats =
+    statsMode === 'combined'
+      ? {
+          matchesPlayed: user.matchesPlayed,
+          wins: user.wins,
+          draws: user.draws || 0,
+          losses: user.losses,
+          points: user.points,
+          goalsFor: user.goalsFor || 0,
+          goalsAgainst: user.goalsAgainst || 0,
+          goalDifference: user.goalDifference ?? ((user.goalsFor || 0) - (user.goalsAgainst || 0)),
+        }
+      : user.stats?.[statsMode] || {
+          matchesPlayed: 0,
+          wins: 0,
+          draws: 0,
+          losses: 0,
+          points: 0,
+          goalsFor: 0,
+          goalsAgainst: 0,
+          goalDifference: 0,
+        };
+
+  const winRate = activeStats.matchesPlayed > 0
+    ? ((activeStats.wins / activeStats.matchesPlayed) * 100).toFixed(1)
     : '0.0';
 
-  // Find best H2H (highest win rate with minimum 1 match)
-  const bestH2H = h2hRecords.length > 0
-    ? h2hRecords.reduce((best, current) => {
-        const currentTotal = current.wins + current.losses;
-        const bestTotal = best.wins + best.losses;
-        if (currentTotal === 0) return best;
-        if (bestTotal === 0) return current;
-        const currentRate = current.wins / currentTotal;
-        const bestRate = best.wins / bestTotal;
-        if (currentRate > bestRate) return current;
-        if (currentRate === bestRate && (current.wins - current.losses) > (best.wins - best.losses)) return current;
+  // Helper to extract H2H stats for a record based on h2hMode
+  const getRecordH2H = (r: H2HRecord) => {
+    if (h2hMode === 'dream') return r.dream || { wins: r.wins, draws: r.draws, losses: r.losses };
+    if (h2hMode === 'auth') return r.auth || { wins: 0, draws: 0, losses: 0 };
+    return { wins: r.wins, draws: r.draws, losses: r.losses };
+  };
+
+  // Find best and worst H2H for selected mode
+  const sortedH2H = [...h2hRecords]
+    .map((r) => ({ ...r, currentH2H: getRecordH2H(r) }))
+    .filter((r) => r.currentH2H.wins + r.currentH2H.draws + r.currentH2H.losses > 0);
+
+  const bestH2H = sortedH2H.length > 0
+    ? sortedH2H.reduce((best, current) => {
+        const cTotal = current.currentH2H.wins + current.currentH2H.draws + current.currentH2H.losses;
+        const bTotal = best.currentH2H.wins + best.currentH2H.draws + best.currentH2H.losses;
+        if (cTotal === 0) return best;
+        if (bTotal === 0) return current;
+        const cRate = current.currentH2H.wins / cTotal;
+        const bRate = best.currentH2H.wins / bTotal;
+        if (cRate > bRate) return current;
+        if (cRate === bRate && (current.currentH2H.wins - current.currentH2H.losses) > (best.currentH2H.wins - best.currentH2H.losses)) return current;
         return best;
       })
     : null;
 
-  // Find worst H2H (lowest win rate)
-  const worstH2H = h2hRecords.length > 0
-    ? h2hRecords.reduce((worst, current) => {
-        const currentTotal = current.wins + current.losses;
-        const worstTotal = worst.wins + worst.losses;
-        if (currentTotal === 0) return worst;
-        if (worstTotal === 0) return current;
-        const currentRate = current.wins / currentTotal;
-        const worstRate = worst.wins / worstTotal;
-        if (currentRate < worstRate) return current;
+  const worstH2H = sortedH2H.length > 0
+    ? sortedH2H.reduce((worst, current) => {
+        const cTotal = current.currentH2H.wins + current.currentH2H.draws + current.currentH2H.losses;
+        const wTotal = worst.currentH2H.wins + worst.currentH2H.draws + worst.currentH2H.losses;
+        if (cTotal === 0) return worst;
+        if (wTotal === 0) return current;
+        const cRate = current.currentH2H.wins / cTotal;
+        const wRate = worst.currentH2H.wins / wTotal;
+        if (cRate < wRate) return current;
         return worst;
       })
     : null;
@@ -99,102 +136,131 @@ export default function UserProfilePage({ params }: { params: Promise<{ id: stri
           Back to Players
         </Link>
 
-        <div className="flex items-center gap-4 flex-wrap">
-          <div className="w-16 h-16 rounded-xl bg-volt/10 border-2 border-volt/30 flex items-center justify-center">
-            <span className="font-heading font-black text-2xl text-volt">
-              {user.displayName.charAt(0).toUpperCase()}
-            </span>
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div className="flex items-center gap-4">
+            <div className="w-16 h-16 rounded-xl bg-volt/10 border-2 border-volt/30 flex items-center justify-center">
+              <span className="font-heading font-black text-2xl text-volt">
+                {user.displayName.charAt(0).toUpperCase()}
+              </span>
+            </div>
+            <div>
+              <h1 className="font-heading font-black text-3xl md:text-4xl tracking-tight text-text-primary">
+                {user.displayName}
+              </h1>
+              <p className="text-text-muted text-xs font-heading uppercase tracking-widest mt-0.5">
+                Player Profile
+              </p>
+            </div>
           </div>
-          <div>
-            <h1 className="font-heading font-black text-3xl md:text-4xl tracking-tight text-text-primary">
-              {user.displayName}
-            </h1>
-            <p className="text-text-muted text-xs font-heading uppercase tracking-widest mt-0.5">
-              Player Profile
-            </p>
+
+          {/* Stats Mode Toggle */}
+          <div className="flex bg-bg-secondary p-1 rounded-xl border border-border">
+            <button
+              onClick={() => setStatsMode('combined')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-heading font-bold uppercase transition-all ${
+                statsMode === 'combined' ? 'bg-volt text-bg-primary shadow' : 'text-text-muted hover:text-text-primary'
+              }`}
+            >
+              Combined
+            </button>
+            <button
+              onClick={() => setStatsMode('dream')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-heading font-bold uppercase transition-all ${
+                statsMode === 'dream' ? 'bg-cyan text-bg-primary shadow' : 'text-text-muted hover:text-text-primary'
+              }`}
+            >
+              Dream Mode
+            </button>
+            <button
+              onClick={() => setStatsMode('auth')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-heading font-bold uppercase transition-all ${
+                statsMode === 'auth' ? 'bg-purple-500 text-white shadow' : 'text-text-muted hover:text-text-primary'
+              }`}
+            >
+              Auth Mode
+            </button>
           </div>
         </div>
       </div>
 
-      {/* Overall Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      {/* Main Stats Summary Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
         <div className="card-glow p-5 text-center">
-          <p className="text-3xl font-heading font-black text-text-primary">{user.matchesPlayed}</p>
-          <p className="text-xs text-text-muted font-heading uppercase tracking-widest mt-1">Matches</p>
+          <p className="text-3xl font-heading font-black text-text-primary">{activeStats.matchesPlayed}</p>
+          <p className="text-xs text-text-muted font-heading uppercase tracking-widest mt-1">Played</p>
         </div>
         <div className="card-glow p-5 text-center">
-          <p className="text-3xl font-heading font-black text-volt">{user.wins}</p>
-          <p className="text-xs text-text-muted font-heading uppercase tracking-widest mt-1">Wins</p>
+          <p className="text-3xl font-heading font-black text-volt">{activeStats.wins}</p>
+          <p className="text-xs text-text-muted font-heading uppercase tracking-widest mt-1">Wins (+3)</p>
         </div>
         <div className="card-glow p-5 text-center">
-          <p className="text-3xl font-heading font-black text-red">{user.losses}</p>
-          <p className="text-xs text-text-muted font-heading uppercase tracking-widest mt-1">Losses</p>
+          <p className="text-3xl font-heading font-black text-cyan">{activeStats.draws}</p>
+          <p className="text-xs text-text-muted font-heading uppercase tracking-widest mt-1">Draws (+1)</p>
         </div>
         <div className="card-glow p-5 text-center">
-          <p className="text-3xl font-heading font-black text-cyan">{winRate}%</p>
-          <p className="text-xs text-text-muted font-heading uppercase tracking-widest mt-1">Win Rate</p>
+          <p className="text-3xl font-heading font-black text-red">{activeStats.losses}</p>
+          <p className="text-xs text-text-muted font-heading uppercase tracking-widest mt-1">Losses (-1)</p>
+        </div>
+        <div className="card-glow p-5 text-center col-span-2 sm:col-span-1 border-volt/30">
+          <p className="text-3xl font-heading font-black text-volt">{activeStats.points}</p>
+          <p className="text-xs text-volt font-heading uppercase tracking-widest mt-1">Total Points</p>
         </div>
       </div>
 
       {/* Goal Stats Cards */}
-      {(() => {
-        const gf = user.goalsFor || 0;
-        const ga = user.goalsAgainst || 0;
-        const gd = user.goalDifference ?? (gf - ga);
-        return (
-          <div className="grid grid-cols-3 gap-4">
-            <div className="card-glow p-4 text-center">
-              <p className="text-2xl font-heading font-black text-text-primary font-mono">{gf}</p>
-              <p className="text-xs text-text-muted font-heading uppercase tracking-widest mt-1">Goals For (GF)</p>
-            </div>
-            <div className="card-glow p-4 text-center">
-              <p className="text-2xl font-heading font-black text-text-primary font-mono">{ga}</p>
-              <p className="text-xs text-text-muted font-heading uppercase tracking-widest mt-1">Goals Against (GA)</p>
-            </div>
-            <div className="card-glow p-4 text-center">
-              <p className={`text-2xl font-heading font-black font-mono ${gd > 0 ? 'text-volt' : gd < 0 ? 'text-red' : 'text-text-muted'}`}>
-                {gd > 0 ? `+${gd}` : gd}
-              </p>
-              <p className="text-xs text-text-muted font-heading uppercase tracking-widest mt-1">Goal Diff (GD)</p>
-            </div>
-          </div>
-        );
-      })()}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="card-glow p-4 text-center">
+          <p className="text-2xl font-heading font-black text-text-primary font-mono">{activeStats.goalsFor}</p>
+          <p className="text-xs text-text-muted font-heading uppercase tracking-widest mt-1">Goals For (GF)</p>
+        </div>
+        <div className="card-glow p-4 text-center">
+          <p className="text-2xl font-heading font-black text-text-primary font-mono">{activeStats.goalsAgainst}</p>
+          <p className="text-xs text-text-muted font-heading uppercase tracking-widest mt-1">Goals Against (GA)</p>
+        </div>
+        <div className="card-glow p-4 text-center">
+          <p className={`text-2xl font-heading font-black font-mono ${activeStats.goalDifference > 0 ? 'text-volt' : activeStats.goalDifference < 0 ? 'text-red' : 'text-text-muted'}`}>
+            {activeStats.goalDifference > 0 ? `+${activeStats.goalDifference}` : activeStats.goalDifference}
+          </p>
+          <p className="text-xs text-text-muted font-heading uppercase tracking-widest mt-1">Goal Diff (GD)</p>
+        </div>
+      </div>
 
       {/* Best & Worst H2H Highlights */}
-      {h2hRecords.length > 0 && (
+      {sortedH2H.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {bestH2H && (bestH2H.wins + bestH2H.losses > 0) && (
+          {bestH2H && (
             <div className="card-glow p-5 border-volt/20">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-volt text-lg">🎯</span>
-                <h3 className="font-heading font-bold text-sm uppercase tracking-widest text-volt">Best H2H</h3>
+                <h3 className="font-heading font-bold text-sm uppercase tracking-widest text-volt">
+                  Best H2H ({h2hMode.toUpperCase()})
+                </h3>
               </div>
               <p className="font-heading font-bold text-xl text-text-primary">{bestH2H.opponentName}</p>
               <p className="text-sm text-text-secondary mt-1">
-                <span className="text-volt font-bold">{bestH2H.wins}W</span>
+                <span className="text-volt font-bold">{bestH2H.currentH2H.wins}W</span>
                 <span className="text-text-muted mx-1">-</span>
-                <span className="text-red font-bold">{bestH2H.losses}L</span>
-                <span className="text-text-muted ml-2">
-                  ({((bestH2H.wins / (bestH2H.wins + bestH2H.losses)) * 100).toFixed(0)}% win rate)
-                </span>
+                <span className="text-cyan font-bold">{bestH2H.currentH2H.draws}D</span>
+                <span className="text-text-muted mx-1">-</span>
+                <span className="text-red font-bold">{bestH2H.currentH2H.losses}L</span>
               </p>
             </div>
           )}
-          {worstH2H && (worstH2H.wins + worstH2H.losses > 0) && worstH2H.opponentId !== bestH2H?.opponentId && (
+          {worstH2H && worstH2H.opponentId !== bestH2H?.opponentId && (
             <div className="card-glow p-5 border-red/20">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-red text-lg">⚠</span>
-                <h3 className="font-heading font-bold text-sm uppercase tracking-widest text-red">Toughest Rival</h3>
+                <h3 className="font-heading font-bold text-sm uppercase tracking-widest text-red">
+                  Toughest Rival ({h2hMode.toUpperCase()})
+                </h3>
               </div>
               <p className="font-heading font-bold text-xl text-text-primary">{worstH2H.opponentName}</p>
               <p className="text-sm text-text-secondary mt-1">
-                <span className="text-volt font-bold">{worstH2H.wins}W</span>
+                <span className="text-volt font-bold">{worstH2H.currentH2H.wins}W</span>
                 <span className="text-text-muted mx-1">-</span>
-                <span className="text-red font-bold">{worstH2H.losses}L</span>
-                <span className="text-text-muted ml-2">
-                  ({((worstH2H.wins / (worstH2H.wins + worstH2H.losses)) * 100).toFixed(0)}% win rate)
-                </span>
+                <span className="text-cyan font-bold">{worstH2H.currentH2H.draws}D</span>
+                <span className="text-text-muted mx-1">-</span>
+                <span className="text-red font-bold">{worstH2H.currentH2H.losses}L</span>
               </p>
             </div>
           )}
@@ -202,29 +268,64 @@ export default function UserProfilePage({ params }: { params: Promise<{ id: stri
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* H2H Breakdown */}
+        {/* Head-to-Head Section with Mode Filters */}
         <div className="card-glow p-0 overflow-hidden">
-          <div className="p-5 border-b border-border">
+          <div className="p-5 border-b border-border flex items-center justify-between flex-wrap gap-2">
             <h2 className="font-heading font-bold text-lg uppercase tracking-wide accent-bar">
               Head-to-Head Records
             </h2>
+
+            {/* H2H Mode Selector */}
+            <div className="flex bg-bg-secondary p-1 rounded-lg border border-border">
+              <button
+                onClick={() => setH2hMode('combined')}
+                className={`px-2.5 py-1 rounded text-[0.65rem] font-heading font-bold uppercase transition-all ${
+                  h2hMode === 'combined' ? 'bg-volt text-bg-primary' : 'text-text-muted hover:text-text-primary'
+                }`}
+              >
+                All
+              </button>
+              <button
+                onClick={() => setH2hMode('dream')}
+                className={`px-2.5 py-1 rounded text-[0.65rem] font-heading font-bold uppercase transition-all ${
+                  h2hMode === 'dream' ? 'bg-cyan text-bg-primary' : 'text-text-muted hover:text-text-primary'
+                }`}
+              >
+                Dream H2H
+              </button>
+              <button
+                onClick={() => setH2hMode('auth')}
+                className={`px-2.5 py-1 rounded text-[0.65rem] font-heading font-bold uppercase transition-all ${
+                  h2hMode === 'auth' ? 'bg-purple-500 text-white' : 'text-text-muted hover:text-text-primary'
+                }`}
+              >
+                Auth H2H
+              </button>
+            </div>
           </div>
+
           {h2hRecords.length === 0 ? (
             <div className="p-8 text-center text-text-muted text-sm">No H2H records yet</div>
           ) : (
             <div className="divide-y divide-border">
               {h2hRecords
+                .map((record) => {
+                  const modeH2H = getRecordH2H(record);
+                  return { ...record, modeH2H };
+                })
+                .filter((r) => r.modeH2H.wins + r.modeH2H.draws + r.modeH2H.losses > 0 || h2hMode === 'combined')
                 .sort((a, b) => {
-                  const aTotal = a.wins + a.losses;
-                  const bTotal = b.wins + b.losses;
+                  const aTotal = a.modeH2H.wins + a.modeH2H.draws + a.modeH2H.losses;
+                  const bTotal = b.modeH2H.wins + b.modeH2H.draws + b.modeH2H.losses;
                   if (aTotal === 0) return 1;
                   if (bTotal === 0) return -1;
-                  return (b.wins / bTotal) - (a.wins / aTotal);
+                  return (b.modeH2H.wins / bTotal) - (a.modeH2H.wins / aTotal);
                 })
                 .map((record) => {
-                  const total = record.wins + record.losses;
-                  const rate = total > 0 ? ((record.wins / total) * 100).toFixed(0) : '0';
-                  const barWidth = total > 0 ? (record.wins / total) * 100 : 50;
+                  const total = record.modeH2H.wins + record.modeH2H.draws + record.modeH2H.losses;
+                  const rate = total > 0 ? ((record.modeH2H.wins / total) * 100).toFixed(0) : '0';
+                  const winPercent = total > 0 ? (record.modeH2H.wins / total) * 100 : 33;
+                  const drawPercent = total > 0 ? (record.modeH2H.draws / total) * 100 : 33;
 
                   return (
                     <div key={record.opponentId} className="p-4 hover:bg-bg-card-hover transition-colors">
@@ -232,17 +333,18 @@ export default function UserProfilePage({ params }: { params: Promise<{ id: stri
                         <span className="font-heading font-semibold text-sm text-text-primary">
                           vs {record.opponentName}
                         </span>
-                        <span className="text-xs text-text-muted">{rate}% WR</span>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className="text-xs text-volt font-bold w-8 text-right">{record.wins}W</span>
-                        <div className="flex-1 h-2 bg-red/30 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-volt rounded-full transition-all duration-500"
-                            style={{ width: `${barWidth}%` }}
-                          />
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-volt font-bold">{record.modeH2H.wins}W</span>
+                          <span className="text-xs text-cyan font-bold">{record.modeH2H.draws}D</span>
+                          <span className="text-xs text-red font-bold">{record.modeH2H.losses}L</span>
+                          <span className="text-[0.65rem] text-text-muted ml-1">({rate}% WR)</span>
                         </div>
-                        <span className="text-xs text-red font-bold w-8">{record.losses}L</span>
+                      </div>
+
+                      <div className="flex items-center gap-1 h-2 rounded-full overflow-hidden bg-bg-secondary border border-border">
+                        <div className="h-full bg-volt transition-all duration-500" style={{ width: `${winPercent}%` }} />
+                        <div className="h-full bg-cyan transition-all duration-500" style={{ width: `${drawPercent}%` }} />
+                        <div className="h-full bg-red transition-all duration-500 flex-1" />
                       </div>
                     </div>
                   );
@@ -266,10 +368,11 @@ export default function UserProfilePage({ params }: { params: Promise<{ id: stri
 
       {/* Match History */}
       <div className="card-glow p-0 overflow-hidden">
-        <div className="p-5 border-b border-border">
+        <div className="p-5 border-b border-border flex items-center justify-between">
           <h2 className="font-heading font-bold text-lg uppercase tracking-wide accent-bar">
             Match History
           </h2>
+          <span className="text-xs text-text-muted">{matches.length} matches played</span>
         </div>
 
         {matches.length === 0 ? (
@@ -282,16 +385,24 @@ export default function UserProfilePage({ params }: { params: Promise<{ id: stri
                   <th>Opponent</th>
                   <th className="text-center">Score</th>
                   <th className="text-center">Result</th>
+                  <th className="text-center">Mode</th>
                   <th className="text-center">Type</th>
                   <th>Date</th>
                 </tr>
               </thead>
               <tbody>
                 {matches.map((match) => {
-                  const isWinner = match.winnerId === userId;
-                  const opponent = match.player1Id === userId ? match.player2Name : match.player1Name;
-                  const userScore = match.player1Id === userId ? match.player1Score : match.player2Score;
-                  const oppScore = match.player1Id === userId ? match.player2Score : match.player1Score;
+                  const isP1 = match.player1Id === userId;
+                  const opponent = isP1 ? match.player2Name : match.player1Name;
+                  const userScore = isP1 ? match.player1Score : match.player2Score;
+                  const oppScore = isP1 ? match.player2Score : match.player1Score;
+
+                  let resultBadge = <span className="badge badge-loss">LOSS</span>;
+                  if (match.isDraw) {
+                    resultBadge = <span className="badge bg-amber-500/15 text-amber-400 border border-amber-500/30">DRAW (+1)</span>;
+                  } else if (match.winnerId === userId) {
+                    resultBadge = <span className="badge badge-win">WIN (+3)</span>;
+                  }
 
                   return (
                     <tr key={match.id}>
@@ -302,17 +413,21 @@ export default function UserProfilePage({ params }: { params: Promise<{ id: stri
                         </span>
                         {match.isPenalty && match.penaltyScore1 !== undefined && (
                           <span className="block text-xs text-cyan">
-                            ({match.player1Id === userId ? match.penaltyScore1 : match.penaltyScore2} - {match.player1Id === userId ? match.penaltyScore2 : match.penaltyScore1} pen)
+                            ({isP1 ? match.penaltyScore1 : match.penaltyScore2} - {isP1 ? match.penaltyScore2 : match.penaltyScore1} pen)
                           </span>
                         )}
                       </td>
+                      <td className="text-center">{resultBadge}</td>
                       <td className="text-center">
-                        <span className={`badge ${isWinner ? 'badge-win' : 'badge-loss'}`}>
-                          {isWinner ? 'WIN' : 'LOSS'}
+                        <span className={`px-2 py-0.5 rounded text-[0.6rem] font-heading font-bold uppercase tracking-wider ${
+                          match.matchType === 'auth' ? 'bg-purple-500/15 text-purple-400 border border-purple-500/30' : 'bg-cyan/15 text-cyan border border-cyan/30'
+                        }`}>
+                          {match.matchType === 'auth' ? 'AUTH' : 'DREAM'}
                         </span>
                       </td>
                       <td className="text-center">
                         <div className="flex justify-center gap-1">
+                          {match.isDraw && <span className="badge badge-loss text-[0.6rem] bg-amber-500/15 text-amber-400 border-amber-500/30">DRAW</span>}
                           {match.isPenalty && <span className="badge badge-penalty text-[0.6rem]">PEN</span>}
                           {match.tournamentId && <span className="badge badge-tournament text-[0.6rem]">CUP</span>}
                         </div>

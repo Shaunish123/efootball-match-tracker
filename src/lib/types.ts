@@ -1,22 +1,50 @@
+export type MatchType = 'dream' | 'auth';
+
+export interface ModeStats {
+  matchesPlayed: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  points: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalDifference: number;
+}
+
 export interface User {
   id: string;
   displayName: string;
   efootballUsername: string; // Hidden in UI, used for delete confirmation
   matchesPlayed: number;
   wins: number;
+  draws: number;
   losses: number;
+  points: number; // (wins * 3) + (draws * 1) - (losses * 1)
   goalsFor?: number;
   goalsAgainst?: number;
   goalDifference?: number;
+  stats?: {
+    dream?: ModeStats;
+    auth?: ModeStats;
+  };
   createdAt: number;
 }
 
-// Head-to-head record stored under users/{userId}/h2h/{opponentId}
+export interface ModeH2H {
+  wins: number;
+  draws: number;
+  losses: number;
+}
+
+// Head-to-head record stored under users/{userId}/h2h/{opponentId} or h2h/{userId}/{opponentId}
 export interface H2HRecord {
   opponentId: string;
   opponentName: string;
   wins: number;
+  draws: number;
   losses: number;
+  dream?: ModeH2H;
+  auth?: ModeH2H;
 }
 
 export interface Match {
@@ -27,13 +55,15 @@ export interface Match {
   player2Name: string;
   player1Score: number;
   player2Score: number;
+  matchType: MatchType;
+  isDraw: boolean;
   isPenalty: boolean;
   penaltyScore1?: number;
   penaltyScore2?: number;
-  winnerId: string;
-  loserId: string;
-  winnerName: string;
-  loserName: string;
+  winnerId?: string;
+  loserId?: string;
+  winnerName?: string;
+  loserName?: string;
   tournamentId?: string;
   tournamentRound?: string;
   createdAt: number;
@@ -43,6 +73,7 @@ export interface Tournament {
   id: string;
   name: string;
   format: 4 | 8;
+  matchType: MatchType;
   status: 'in_progress' | 'completed';
   roster: string[]; // User IDs
   rosterNames: Record<string, string>; // userId -> displayName
@@ -60,6 +91,8 @@ export interface TournamentMatch {
   player2Name?: string;
   player1Score?: number;
   player2Score?: number;
+  matchType?: MatchType;
+  isDraw?: boolean;
   isPenalty?: boolean;
   penaltyScore1?: number;
   penaltyScore2?: number;
@@ -81,3 +114,4 @@ export interface TournamentStandings {
   third?: string;
   fourth?: string;
 }
+

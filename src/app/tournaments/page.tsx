@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { subscribeToUsers, subscribeToTournaments, createTournament } from '@/lib/db';
-import { User, Tournament } from '@/lib/types';
+import { User, Tournament, MatchType } from '@/lib/types';
 import Link from 'next/link';
 
 export default function TournamentsPage() {
@@ -14,6 +14,7 @@ export default function TournamentsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [tournamentName, setTournamentName] = useState('');
   const [format, setFormat] = useState<4 | 8>(4);
+  const [matchType, setMatchType] = useState<MatchType>('dream');
   const [pairings, setPairings] = useState<Array<{ player1Id: string; player2Id: string }>>([
     { player1Id: '', player2Id: '' },
     { player1Id: '', player2Id: '' },
@@ -91,8 +92,9 @@ export default function TournamentsPage() {
         if (u) userNames[id] = u.displayName;
       });
 
-      await createTournament(tournamentName.trim(), format, pairings, userNames);
+      await createTournament(tournamentName.trim(), format, pairings, userNames, matchType);
       setTournamentName('');
+      setMatchType('dream');
       setPairings(Array.from({ length: format / 2 }, () => ({ player1Id: '', player2Id: '' })));
       setShowCreate(false);
     } catch (err: any) {
@@ -106,7 +108,6 @@ export default function TournamentsPage() {
   const activeTournaments = tournaments.filter((t) => t.status === 'in_progress');
   const completedTournaments = tournaments.filter((t) => t.status === 'completed');
 
-  // List of all currently selected player IDs in the pairings form
   const selectedPlayerIds = new Set(pairings.flatMap((p) => [p.player1Id, p.player2Id]).filter(Boolean));
 
   if (loading) {
@@ -157,18 +158,50 @@ export default function TournamentsPage() {
           </div>
 
           <form onSubmit={handleCreateTournament} className="space-y-6">
-            <div>
-              <label className="block text-xs font-heading font-bold uppercase tracking-widest text-text-muted mb-2">
-                Tournament Name
-              </label>
-              <input
-                id="input-tournament-name"
-                type="text"
-                value={tournamentName}
-                onChange={(e) => setTournamentName(e.target.value)}
-                className="input-dark max-w-md"
-                placeholder="e.g. Friday Night Cup"
-              />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-heading font-bold uppercase tracking-widest text-text-muted mb-2">
+                  Tournament Name
+                </label>
+                <input
+                  id="input-tournament-name"
+                  type="text"
+                  value={tournamentName}
+                  onChange={(e) => setTournamentName(e.target.value)}
+                  className="input-dark"
+                  placeholder="e.g. Friday Night Cup"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-heading font-bold uppercase tracking-widest text-text-muted mb-2">
+                  Match Mode
+                </label>
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setMatchType('dream')}
+                    className={`flex-1 py-2.5 px-4 rounded-lg font-heading font-bold text-xs uppercase transition-all ${
+                      matchType === 'dream'
+                        ? 'bg-cyan/15 text-cyan border border-cyan/40 shadow-[0_0_15px_rgba(0,229,255,0.2)]'
+                        : 'bg-bg-secondary text-text-muted border border-border'
+                    }`}
+                  >
+                    ⚡ Dream Team
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMatchType('auth')}
+                    className={`flex-1 py-2.5 px-4 rounded-lg font-heading font-bold text-xs uppercase transition-all ${
+                      matchType === 'auth'
+                        ? 'bg-purple-500/15 text-purple-400 border border-purple-500/40 shadow-[0_0_15px_rgba(168,85,247,0.2)]'
+                        : 'bg-bg-secondary text-text-muted border border-border'
+                    }`}
+                  >
+                    🛡️ Auth Team
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div>
@@ -218,7 +251,6 @@ export default function TournamentsPage() {
                         Match {idx + 1}
                       </span>
 
-                      {/* Player 1 Dropdown */}
                       <select
                         value={pair.player1Id}
                         onChange={(e) => updatePairing(idx, 'player1Id', e.target.value)}
@@ -239,7 +271,6 @@ export default function TournamentsPage() {
                         VS
                       </span>
 
-                      {/* Player 2 Dropdown */}
                       <select
                         value={pair.player2Id}
                         onChange={(e) => updatePairing(idx, 'player2Id', e.target.value)}
@@ -290,7 +321,14 @@ export default function TournamentsPage() {
                 <div className="card-glow p-5 hover:border-volt/50 transition-all group animate-pulse-glow">
                   <div className="flex items-center justify-between mb-3">
                     <span className="badge badge-tournament">LIVE</span>
-                    <span className="text-xs text-text-muted">{t.format}-player</span>
+                    <div className="flex gap-1.5 items-center">
+                      <span className={`px-2 py-0.5 rounded text-[0.6rem] font-heading font-bold uppercase ${
+                        t.matchType === 'auth' ? 'bg-purple-500/15 text-purple-400 border border-purple-500/30' : 'bg-cyan/15 text-cyan border border-cyan/30'
+                      }`}>
+                        {t.matchType === 'auth' ? 'AUTH' : 'DREAM'}
+                      </span>
+                      <span className="text-xs text-text-muted">{t.format}-player</span>
+                    </div>
                   </div>
                   <h3 className="font-heading font-bold text-xl text-text-primary group-hover:text-volt transition-colors mb-2">
                     {t.name}
@@ -324,7 +362,14 @@ export default function TournamentsPage() {
                 <div className="card-glow p-5 hover:border-cyan/30 transition-all group">
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-xs text-text-muted font-heading uppercase">Completed</span>
-                    <span className="text-xs text-text-muted">{t.format}-player</span>
+                    <div className="flex gap-1.5 items-center">
+                      <span className={`px-2 py-0.5 rounded text-[0.6rem] font-heading font-bold uppercase ${
+                        t.matchType === 'auth' ? 'bg-purple-500/15 text-purple-400 border border-purple-500/30' : 'bg-cyan/15 text-cyan border border-cyan/30'
+                      }`}>
+                        {t.matchType === 'auth' ? 'AUTH' : 'DREAM'}
+                      </span>
+                      <span className="text-xs text-text-muted">{t.format}-player</span>
+                    </div>
                   </div>
                   <h3 className="font-heading font-bold text-xl text-text-primary group-hover:text-cyan transition-colors mb-2">
                     {t.name}

@@ -83,16 +83,14 @@ export default function UsersPage() {
   };
 
   const sorted = [...users].sort((a, b) => {
-    if (b.wins !== a.wins) return b.wins - a.wins;
+    if (b.points !== a.points) return b.points - a.points;
     const aGD = a.goalDifference ?? ((a.goalsFor || 0) - (a.goalsAgainst || 0));
     const bGD = b.goalDifference ?? ((b.goalsFor || 0) - (b.goalsAgainst || 0));
     if (bGD !== aGD) return bGD - aGD;
     const aGF = a.goalsFor || 0;
     const bGF = b.goalsFor || 0;
     if (bGF !== aGF) return bGF - aGF;
-    const aRate = a.matchesPlayed > 0 ? a.wins / a.matchesPlayed : 0;
-    const bRate = b.matchesPlayed > 0 ? b.wins / b.matchesPlayed : 0;
-    return bRate - aRate;
+    return b.wins - a.wins;
   });
 
   if (loading) {
@@ -211,23 +209,27 @@ export default function UsersPage() {
                   </p>
                 </div>
 
-                {/* Main W/L Stats */}
-                <div className="grid grid-cols-4 gap-2 mb-2">
-                  <div className="text-center p-2 rounded bg-bg-secondary">
-                    <p className="text-lg font-heading font-black text-text-primary">{user.matchesPlayed}</p>
-                    <p className="text-[0.6rem] text-text-muted font-heading uppercase">Played</p>
+                {/* Main W/D/L/PTS Stats */}
+                <div className="grid grid-cols-5 gap-1.5 mb-2 text-center">
+                  <div className="p-2 rounded bg-bg-secondary">
+                    <p className="text-base font-heading font-black text-text-primary">{user.matchesPlayed}</p>
+                    <p className="text-[0.55rem] text-text-muted font-heading uppercase">Played</p>
                   </div>
-                  <div className="text-center p-2 rounded bg-bg-secondary">
-                    <p className="text-lg font-heading font-black text-volt">{user.wins}</p>
-                    <p className="text-[0.6rem] text-text-muted font-heading uppercase">Wins</p>
+                  <div className="p-2 rounded bg-bg-secondary">
+                    <p className="text-base font-heading font-black text-volt">{user.wins}</p>
+                    <p className="text-[0.55rem] text-text-muted font-heading uppercase">Wins</p>
                   </div>
-                  <div className="text-center p-2 rounded bg-bg-secondary">
-                    <p className="text-lg font-heading font-black text-red">{user.losses}</p>
-                    <p className="text-[0.6rem] text-text-muted font-heading uppercase">Losses</p>
+                  <div className="p-2 rounded bg-bg-secondary">
+                    <p className="text-base font-heading font-black text-cyan">{user.draws || 0}</p>
+                    <p className="text-[0.55rem] text-text-muted font-heading uppercase">Draws</p>
                   </div>
-                  <div className="text-center p-2 rounded bg-bg-secondary">
-                    <p className="text-lg font-heading font-black text-cyan">{winRate}%</p>
-                    <p className="text-[0.6rem] text-text-muted font-heading uppercase">Rate</p>
+                  <div className="p-2 rounded bg-bg-secondary">
+                    <p className="text-base font-heading font-black text-red">{user.losses}</p>
+                    <p className="text-[0.55rem] text-text-muted font-heading uppercase">Losses</p>
+                  </div>
+                  <div className="p-2 rounded bg-volt/10 border border-volt/20">
+                    <p className="text-base font-heading font-black text-volt">{user.points}</p>
+                    <p className="text-[0.55rem] text-volt font-heading uppercase">PTS</p>
                   </div>
                 </div>
 

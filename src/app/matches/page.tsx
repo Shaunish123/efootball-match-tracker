@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { subscribeToUsers, subscribeToMatches, logMatch } from '@/lib/db';
-import { User, Match } from '@/lib/types';
+import { User, Match, MatchType } from '@/lib/types';
 
 export default function MatchesPage() {
   const [users, setUsers] = useState<User[]>([]);
@@ -11,7 +11,8 @@ export default function MatchesPage() {
   const [player2Id, setPlayer2Id] = useState('');
   const [score1, setScore1] = useState('');
   const [score2, setScore2] = useState('');
-  const [isPenalty, setIsPenalty] = useState(false);
+  const [matchType, setMatchType] = useState<MatchType>('dream');
+  const [tieResultType, setTieResultType] = useState<'draw' | 'pens'>('draw');
   const [penScore1, setPenScore1] = useState('');
   const [penScore2, setPenScore2] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -24,7 +25,7 @@ export default function MatchesPage() {
     return () => { unsub1(); unsub2(); };
   }, []);
 
-  // Check if scores are tied (enable penalty toggle)
+  // Check if scores are tied
   const scoresAreTied = score1 !== '' && score2 !== '' && parseInt(score1) === parseInt(score2);
 
   const resetForm = () => {
@@ -32,7 +33,8 @@ export default function MatchesPage() {
     setPlayer2Id('');
     setScore1('');
     setScore2('');
-    setIsPenalty(false);
+    setMatchType('dream');
+    setTieResultType('draw');
     setPenScore1('');
     setPenScore2('');
     setError('');
@@ -56,10 +58,10 @@ export default function MatchesPage() {
       setError('Please enter valid scores');
       return;
     }
-    if (s1 === s2 && !isPenalty) {
-      setError('Scores are tied. Enable penalty shootout to determine a winner.');
-      return;
-    }
+
+    const isDraw = s1 === s2 && tieResultType === 'draw';
+    const isPenalty = s1 === s2 && tieResultType === 'pens';
+
     if (isPenalty) {
       const ps1 = parseInt(penScore1);
       const ps2 = parseInt(penScore2);
@@ -85,6 +87,8 @@ export default function MatchesPage() {
         player2Name: p2.displayName,
         player1Score: s1,
         player2Score: s2,
+        matchType,
+        isDraw,
         isPenalty,
         penaltyScore1: isPenalty ? parseInt(penScore1) : undefined,
         penaltyScore2: isPenalty ? parseInt(penScore2) : undefined,
@@ -109,13 +113,46 @@ export default function MatchesPage() {
         <h1 className="font-heading font-black text-3xl md:text-4xl tracking-tight">
           LOG <span className="text-cyan">MATCH</span>
         </h1>
-        <p className="text-text-secondary mt-1 text-sm">Record a match result and update all stats instantly</p>
+        <p className="text-text-secondary mt-1 text-sm">Record a match result and update stats across all leaderboards</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         {/* Match Form */}
         <div className="lg:col-span-2 card-glow p-6">
           <form onSubmit={handleSubmit} className="space-y-5">
+            {/* Match Mode Selector (Dream vs Auth) */}
+            <div>
+              <label className="block text-xs font-heading font-bold uppercase tracking-widest text-text-muted mb-2">
+                Match Mode
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  id="mode-dream-btn"
+                  onClick={() => setMatchType('dream')}
+                  className={`py-2.5 px-4 rounded-lg font-heading font-bold text-xs uppercase tracking-wider transition-all border ${
+                    matchType === 'dream'
+                      ? 'bg-cyan/15 text-cyan border-cyan/40 shadow-[0_0_15px_rgba(0,229,255,0.2)]'
+                      : 'bg-bg-secondary text-text-muted border-border hover:border-border-accent'
+                  }`}
+                >
+                  ⚡ Dream Team
+                </button>
+                <button
+                  type="button"
+                  id="mode-auth-btn"
+                  onClick={() => setMatchType('auth')}
+                  className={`py-2.5 px-4 rounded-lg font-heading font-bold text-xs uppercase tracking-wider transition-all border ${
+                    matchType === 'auth'
+                      ? 'bg-purple-500/15 text-purple-400 border-purple-500/40 shadow-[0_0_15px_rgba(168,85,247,0.2)]'
+                      : 'bg-bg-secondary text-text-muted border-border hover:border-border-accent'
+                  }`}
+                >
+                  🛡️ Auth Team
+                </button>
+              </div>
+            </div>
+
             {/* Player Selection */}
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -172,7 +209,6 @@ export default function MatchesPage() {
                     onChange={(e) => {
                       setScore1(e.target.value);
                       if (e.target.value !== score2) {
-                        setIsPenalty(false);
                         setPenScore1('');
                         setPenScore2('');
                       }
@@ -192,7 +228,6 @@ export default function MatchesPage() {
                     onChange={(e) => {
                       setScore2(e.target.value);
                       if (score1 !== e.target.value) {
-                        setIsPenalty(false);
                         setPenScore1('');
                         setPenScore2('');
                       }
@@ -204,35 +239,43 @@ export default function MatchesPage() {
               </div>
             </div>
 
-            {/* Penalty Toggle */}
+            {/* Tied Score Result Option: Draw vs Pens */}
             {scoresAreTied && (
-              <div className="animate-fade-in">
-                <div className="flex items-center gap-3 p-4 rounded-lg bg-cyan/5 border border-cyan/20">
+              <div className="p-4 rounded-xl bg-bg-secondary border border-cyan/20 animate-fade-in space-y-3">
+                <label className="block text-xs font-heading font-bold uppercase tracking-widest text-cyan">
+                  Scores Are Tied: Choose Result Type
+                </label>
+                <div className="grid grid-cols-2 gap-3">
                   <button
                     type="button"
-                    id="penalty-toggle"
-                    onClick={() => setIsPenalty(!isPenalty)}
-                    className={`
-                      relative w-12 h-6 rounded-full transition-colors duration-200
-                      ${isPenalty ? 'bg-cyan' : 'bg-border-accent'}
-                    `}
+                    id="tie-draw-btn"
+                    onClick={() => setTieResultType('draw')}
+                    className={`py-2 px-3 rounded-lg font-heading font-bold text-xs uppercase transition-all ${
+                      tieResultType === 'draw'
+                        ? 'bg-volt/15 text-volt border border-volt/30'
+                        : 'bg-bg-primary text-text-muted border border-border hover:border-border-accent'
+                    }`}
                   >
-                    <span
-                      className={`
-                        absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform duration-200
-                        ${isPenalty ? 'translate-x-6' : 'translate-x-0'}
-                      `}
-                    />
+                    🤝 Draw (1 Pt Each)
                   </button>
-                  <span className="text-sm font-heading font-semibold text-cyan uppercase tracking-wide">
-                    Penalty Shootout
-                  </span>
+                  <button
+                    type="button"
+                    id="tie-pens-btn"
+                    onClick={() => setTieResultType('pens')}
+                    className={`py-2 px-3 rounded-lg font-heading font-bold text-xs uppercase transition-all ${
+                      tieResultType === 'pens'
+                        ? 'bg-cyan/15 text-cyan border border-cyan/30'
+                        : 'bg-bg-primary text-text-muted border border-border hover:border-border-accent'
+                    }`}
+                  >
+                    ⚽ Penalties (Pens)
+                  </button>
                 </div>
 
-                {isPenalty && (
-                  <div className="mt-4 animate-fade-in">
+                {tieResultType === 'pens' && (
+                  <div className="pt-2 animate-fade-in">
                     <label className="block text-xs font-heading font-bold uppercase tracking-widest text-text-muted mb-2">
-                      Penalty Score
+                      Penalty Shootout Score
                     </label>
                     <div className="flex items-center gap-3">
                       <div className="flex-1 text-center">
@@ -274,7 +317,7 @@ export default function MatchesPage() {
 
             {success && (
               <div className="p-3 rounded-lg bg-volt/10 border border-volt/30 text-volt text-sm font-medium animate-fade-in">
-                ✓ Match logged successfully! Stats updated across all devices.
+                ✓ Match logged successfully! Stats updated across all leaderboards.
               </div>
             )}
 
@@ -284,17 +327,18 @@ export default function MatchesPage() {
               disabled={submitting}
               className="btn-volt w-full"
             >
-              {submitting ? 'Logging...' : 'Log Match Result'}
+              {submitting ? 'Logging Result...' : 'Log Match Result'}
             </button>
           </form>
         </div>
 
         {/* Match History */}
         <div className="lg:col-span-3 card-glow p-0 overflow-hidden">
-          <div className="p-5 border-b border-border">
+          <div className="p-5 border-b border-border flex items-center justify-between">
             <h2 className="font-heading font-bold text-lg uppercase tracking-wide accent-bar">
               Match History
             </h2>
+            <span className="text-xs text-text-muted">{matches.length} matches logged</span>
           </div>
 
           {matches.length === 0 ? (
@@ -308,7 +352,8 @@ export default function MatchesPage() {
                   <tr>
                     <th>Players</th>
                     <th className="text-center">Score</th>
-                    <th>Winner</th>
+                    <th>Result / Winner</th>
+                    <th className="text-center">Mode</th>
                     <th className="text-center">Type</th>
                     <th>Date</th>
                   </tr>
@@ -332,15 +377,29 @@ export default function MatchesPage() {
                         )}
                       </td>
                       <td>
-                        <span className="text-volt font-heading font-semibold text-sm">
-                          {match.winnerName}
+                        {match.isDraw ? (
+                          <span className="text-amber-400 font-heading font-semibold text-xs px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/20">
+                            DRAW (1pt each)
+                          </span>
+                        ) : (
+                          <span className="text-volt font-heading font-semibold text-sm">
+                            {match.winnerName}
+                          </span>
+                        )}
+                      </td>
+                      <td className="text-center">
+                        <span className={`px-2 py-0.5 rounded text-[0.6rem] font-heading font-bold uppercase tracking-wider ${
+                          match.matchType === 'auth' ? 'bg-purple-500/15 text-purple-400 border border-purple-500/30' : 'bg-cyan/15 text-cyan border border-cyan/30'
+                        }`}>
+                          {match.matchType === 'auth' ? 'AUTH' : 'DREAM'}
                         </span>
                       </td>
                       <td className="text-center">
                         <div className="flex justify-center gap-1">
+                          {match.isDraw && <span className="badge badge-loss text-[0.6rem] bg-amber-500/15 text-amber-400 border-amber-500/30">DRAW</span>}
                           {match.isPenalty && <span className="badge badge-penalty text-[0.6rem]">PEN</span>}
                           {match.tournamentId && <span className="badge badge-tournament text-[0.6rem]">CUP</span>}
-                          {!match.isPenalty && !match.tournamentId && <span className="text-text-muted text-xs">REG</span>}
+                          {!match.isDraw && !match.isPenalty && !match.tournamentId && <span className="text-text-muted text-xs">REG</span>}
                         </div>
                       </td>
                       <td className="text-text-secondary text-xs">

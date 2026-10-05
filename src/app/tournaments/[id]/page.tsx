@@ -2,7 +2,7 @@
 
 import { useEffect, useState, use } from 'react';
 import { subscribeToTournament, submitTournamentMatchResult } from '@/lib/db';
-import { Tournament, TournamentMatch } from '@/lib/types';
+import { Tournament, TournamentMatch, MatchType } from '@/lib/types';
 import Link from 'next/link';
 
 interface MatchModalData {
@@ -20,7 +20,8 @@ export default function TournamentDetailPage({ params }: { params: Promise<{ id:
   const [modalData, setModalData] = useState<MatchModalData | null>(null);
   const [score1, setScore1] = useState('');
   const [score2, setScore2] = useState('');
-  const [isPenalty, setIsPenalty] = useState(false);
+  const [matchType, setMatchType] = useState<MatchType>('dream');
+  const [tieResultType, setTieResultType] = useState<'draw' | 'pens'>('pens');
   const [penScore1, setPenScore1] = useState('');
   const [penScore2, setPenScore2] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -43,7 +44,8 @@ export default function TournamentDetailPage({ params }: { params: Promise<{ id:
     setModalData({ round, matchIndex, match });
     setScore1('');
     setScore2('');
-    setIsPenalty(false);
+    setMatchType(match.matchType || tournament?.matchType || 'dream');
+    setTieResultType('pens');
     setPenScore1('');
     setPenScore2('');
     setModalError('');
@@ -60,10 +62,10 @@ export default function TournamentDetailPage({ params }: { params: Promise<{ id:
       setModalError('Enter valid scores');
       return;
     }
-    if (s1 === s2 && !isPenalty) {
-      setModalError('Tied scores require penalty shootout');
-      return;
-    }
+
+    const isDraw = s1 === s2 && tieResultType === 'draw';
+    const isPenalty = s1 === s2 && tieResultType === 'pens';
+
     if (isPenalty) {
       const ps1 = parseInt(penScore1);
       const ps2 = parseInt(penScore2);
@@ -86,9 +88,11 @@ export default function TournamentDetailPage({ params }: { params: Promise<{ id:
         {
           player1Score: s1,
           player2Score: s2,
+          matchType,
+          isDraw,
           isPenalty,
-          penaltyScore1: isPenalty ? parseInt(penScore1) : undefined,
-          penaltyScore2: isPenalty ? parseInt(penScore2) : undefined,
+          penaltyScore1: (isPenalty || isDraw) && penScore1 ? parseInt(penScore1) : undefined,
+          penaltyScore2: (isPenalty || isDraw) && penScore2 ? parseInt(penScore2) : undefined,
         }
       );
       setModalData(null);
@@ -139,16 +143,23 @@ export default function TournamentDetailPage({ params }: { params: Promise<{ id:
         key={`${round}-${matchIndex}`}
         onClick={() => canClick && openMatchModal(round, matchIndex, match)}
         className={`
-          card-glow p-4 min-w-[220px] transition-all
+          card-glow p-4 min-w-[230px] transition-all
           ${canClick ? 'cursor-pointer hover:border-cyan/50 hover:shadow-[0_0_20px_rgba(0,229,255,0.15)]' : ''}
           ${match.completed ? 'border-volt/20' : ''}
           ${!isReady ? 'opacity-50' : ''}
         `}
       >
-        <p className="text-[0.6rem] text-text-muted font-heading uppercase tracking-widest mb-2">{roundLabel}</p>
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-[0.6rem] text-text-muted font-heading uppercase tracking-widest">{roundLabel}</p>
+          <span className={`px-1.5 py-0.5 rounded text-[0.55rem] font-heading font-bold uppercase ${
+            (match.matchType || tournament.matchType) === 'auth' ? 'bg-purple-500/15 text-purple-400 border border-purple-500/30' : 'bg-cyan/15 text-cyan border border-cyan/30'
+          }`}>
+            {(match.matchType || tournament.matchType) === 'auth' ? 'AUTH' : 'DREAM'}
+          </span>
+        </div>
 
         {/* Player 1 */}
-        <div className={`flex items-center justify-between py-1.5 ${match.completed && match.winnerId === match.player1Id ? 'text-volt' : 'text-text-primary'}`}>
+        <div className={`flex items-center justify-between py-1.5 ${match.completed && match.winnerId === match.player1Id ? 'text-volt font-bold' : 'text-text-primary'}`}>
           <span className="font-heading font-semibold text-sm truncate max-w-[140px]">
             {match.player1Name || 'TBD'}
           </span>
@@ -163,7 +174,7 @@ export default function TournamentDetailPage({ params }: { params: Promise<{ id:
         <div className="h-px bg-border my-1" />
 
         {/* Player 2 */}
-        <div className={`flex items-center justify-between py-1.5 ${match.completed && match.winnerId === match.player2Id ? 'text-volt' : 'text-text-primary'}`}>
+        <div className={`flex items-center justify-between py-1.5 ${match.completed && match.winnerId === match.player2Id ? 'text-volt font-bold' : 'text-text-primary'}`}>
           <span className="font-heading font-semibold text-sm truncate max-w-[140px]">
             {match.player2Name || 'TBD'}
           </span>
@@ -175,8 +186,13 @@ export default function TournamentDetailPage({ params }: { params: Promise<{ id:
           )}
         </div>
 
-        {/* Penalty indicator */}
-        {match.isPenalty && match.penaltyScore1 !== undefined && (
+        {/* Penalty / Draw indicator */}
+        {match.completed && match.isDraw && (
+          <p className="text-[0.65rem] text-amber-400 font-heading mt-1 text-center font-bold">
+            DRAW (1pt each) {match.penaltyScore1 !== undefined ? `[${match.penaltyScore1}-${match.penaltyScore2} pen]` : ''}
+          </p>
+        )}
+        {match.completed && !match.isDraw && match.isPenalty && match.penaltyScore1 !== undefined && (
           <p className="text-[0.65rem] text-cyan font-heading mt-1 text-center">
             Penalties: {match.penaltyScore1} - {match.penaltyScore2}
           </p>
@@ -210,6 +226,11 @@ export default function TournamentDetailPage({ params }: { params: Promise<{ id:
           </h1>
           <span className={`badge ${tournament.status === 'in_progress' ? 'badge-tournament' : 'badge-win'}`}>
             {tournament.status === 'in_progress' ? 'LIVE' : 'COMPLETED'}
+          </span>
+          <span className={`px-2.5 py-1 rounded text-xs font-heading font-bold uppercase tracking-wider ${
+            tournament.matchType === 'auth' ? 'bg-purple-500/15 text-purple-400 border border-purple-500/30' : 'bg-cyan/15 text-cyan border border-cyan/30'
+          }`}>
+            {tournament.matchType === 'auth' ? 'AUTH MODE' : 'DREAM MODE'}
           </span>
         </div>
         <p className="text-text-secondary text-sm mt-1">
@@ -263,7 +284,6 @@ export default function TournamentDetailPage({ params }: { params: Promise<{ id:
             </div>
           )}
 
-          {/* Connector lines visual cue */}
           {bracket.quarterFinals && (
             <div className="flex flex-col justify-center self-center">
               <div className="w-8 border-t-2 border-border-accent" />
@@ -326,14 +346,41 @@ export default function TournamentDetailPage({ params }: { params: Promise<{ id:
         <div className="fixed inset-0 z-50 modal-backdrop flex items-center justify-center p-4">
           <div className="card-glow p-6 max-w-md w-full animate-scale-in" onClick={(e) => e.stopPropagation()}>
             <h3 className="font-heading font-bold text-lg text-center uppercase tracking-wide mb-1">
-              Submit Result
+              Submit Match Result
             </h3>
-            <p className="text-center text-text-muted text-xs font-heading uppercase tracking-widest mb-6">
+            <p className="text-center text-text-muted text-xs font-heading uppercase tracking-widest mb-4">
               {modalData.round.replace(/([A-Z])/g, ' $1').trim()}
             </p>
 
+            {/* Match Mode Option */}
+            <div className="mb-4">
+              <label className="block text-[0.65rem] font-heading font-bold uppercase tracking-widest text-text-muted mb-1 text-center">
+                Match Mode
+              </label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMatchType('dream')}
+                  className={`flex-1 py-1.5 px-3 rounded font-heading font-bold text-xs uppercase ${
+                    matchType === 'dream' ? 'bg-cyan text-bg-primary font-black' : 'bg-bg-secondary text-text-muted'
+                  }`}
+                >
+                  Dream Mode
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMatchType('auth')}
+                  className={`flex-1 py-1.5 px-3 rounded font-heading font-bold text-xs uppercase ${
+                    matchType === 'auth' ? 'bg-purple-500 text-white font-black' : 'bg-bg-secondary text-text-muted'
+                  }`}
+                >
+                  Auth Mode
+                </button>
+              </div>
+            </div>
+
             {/* Scores */}
-            <div className="flex items-center gap-4 mb-6">
+            <div className="flex items-center gap-4 mb-4">
               <div className="flex-1 text-center">
                 <p className="text-sm text-text-secondary mb-2 font-heading font-semibold truncate">
                   {modalData.match.player1Name}
@@ -345,7 +392,6 @@ export default function TournamentDetailPage({ params }: { params: Promise<{ id:
                   onChange={(e) => {
                     setScore1(e.target.value);
                     if (e.target.value !== score2) {
-                      setIsPenalty(false);
                       setPenScore1('');
                       setPenScore2('');
                     }
@@ -367,7 +413,6 @@ export default function TournamentDetailPage({ params }: { params: Promise<{ id:
                   onChange={(e) => {
                     setScore2(e.target.value);
                     if (score1 !== e.target.value) {
-                      setIsPenalty(false);
                       setPenScore1('');
                       setPenScore2('');
                     }
@@ -378,22 +423,39 @@ export default function TournamentDetailPage({ params }: { params: Promise<{ id:
               </div>
             </div>
 
-            {/* Penalty Toggle */}
+            {/* Tied Scores handling */}
             {scoresAreTied && (
-              <div className="mb-6 animate-fade-in">
-                <div className="flex items-center gap-3 p-3 rounded-lg bg-cyan/5 border border-cyan/20 mb-3">
+              <div className="mb-5 p-3 rounded-xl bg-bg-secondary border border-cyan/20 animate-fade-in space-y-2">
+                <label className="block text-[0.65rem] font-heading font-bold uppercase tracking-widest text-cyan text-center">
+                  Scores Tied: Choose Result
+                </label>
+                <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
-                    onClick={() => setIsPenalty(!isPenalty)}
-                    className={`relative w-10 h-5 rounded-full transition-colors ${isPenalty ? 'bg-cyan' : 'bg-border-accent'}`}
+                    onClick={() => setTieResultType('draw')}
+                    className={`py-1.5 px-2 rounded text-xs font-heading font-bold uppercase ${
+                      tieResultType === 'draw' ? 'bg-volt/20 text-volt border border-volt/30' : 'bg-bg-primary text-text-muted'
+                    }`}
                   >
-                    <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${isPenalty ? 'translate-x-5' : ''}`} />
+                    🤝 Draw (1pt each)
                   </button>
-                  <span className="text-sm font-heading font-semibold text-cyan uppercase tracking-wide">Penalties</span>
+                  <button
+                    type="button"
+                    onClick={() => setTieResultType('pens')}
+                    className={`py-1.5 px-2 rounded text-xs font-heading font-bold uppercase ${
+                      tieResultType === 'pens' ? 'bg-cyan/20 text-cyan border border-cyan/30' : 'bg-bg-primary text-text-muted'
+                    }`}
+                  >
+                    ⚽ Penalties (Pens)
+                  </button>
                 </div>
 
-                {isPenalty && (
-                  <div className="flex items-center gap-4 animate-fade-in">
+                {/* Penalty scores inputs */}
+                <div className="pt-2 animate-fade-in">
+                  <p className="text-[0.65rem] text-text-muted font-heading uppercase text-center mb-1">
+                    Penalty Shootout Score (Determines Advancement)
+                  </p>
+                  <div className="flex items-center gap-3">
                     <div className="flex-1 text-center">
                       <input
                         type="number"
@@ -416,7 +478,7 @@ export default function TournamentDetailPage({ params }: { params: Promise<{ id:
                       />
                     </div>
                   </div>
-                )}
+                </div>
               </div>
             )}
 

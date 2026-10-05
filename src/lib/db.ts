@@ -8,12 +8,23 @@ import {
   update,
   onValue,
   off,
-  query,
-  orderByChild,
-  serverTimestamp,
   DataSnapshot,
 } from 'firebase/database';
-import { User, Match, Tournament, TournamentMatch, TournamentBracket, H2HRecord } from './types';
+import { User, Match, Tournament, TournamentMatch, TournamentBracket, H2HRecord, MatchType, ModeStats } from './types';
+
+// Helper for default mode stats
+function createEmptyModeStats(): ModeStats {
+  return {
+    matchesPlayed: 0,
+    wins: 0,
+    draws: 0,
+    losses: 0,
+    points: 0,
+    goalsFor: 0,
+    goalsAgainst: 0,
+    goalDifference: 0,
+  };
+}
 
 // ==================== USER OPERATIONS ====================
 
@@ -27,10 +38,36 @@ export function subscribeToUsers(callback: (users: User[]) => void) {
         callback([]);
         return;
       }
-      const users: User[] = Object.keys(data).map((key) => ({
-        ...data[key],
-        id: key,
-      }));
+      const users: User[] = Object.keys(data).map((key) => {
+        const u = data[key];
+        const wins = u.wins || 0;
+        const draws = u.draws || 0;
+        const losses = u.losses || 0;
+        const points = u.points ?? (wins * 3 + draws * 1 - losses * 1);
+        const goalsFor = u.goalsFor || 0;
+        const goalsAgainst = u.goalsAgainst || 0;
+        const goalDifference = u.goalDifference ?? (goalsFor - goalsAgainst);
+
+        const dreamStats = u.stats?.dream || createEmptyModeStats();
+        const authStats = u.stats?.auth || createEmptyModeStats();
+
+        return {
+          ...u,
+          id: key,
+          matchesPlayed: u.matchesPlayed || 0,
+          wins,
+          draws,
+          losses,
+          points,
+          goalsFor,
+          goalsAgainst,
+          goalDifference,
+          stats: {
+            dream: dreamStats,
+            auth: authStats,
+          },
+        };
+      });
       callback(users);
     },
     (error) => {
@@ -49,10 +86,16 @@ export async function addUser(displayName: string, efootballUsername: string): P
     efootballUsername,
     matchesPlayed: 0,
     wins: 0,
+    draws: 0,
     losses: 0,
+    points: 0,
     goalsFor: 0,
     goalsAgainst: 0,
     goalDifference: 0,
+    stats: {
+      dream: createEmptyModeStats(),
+      auth: createEmptyModeStats(),
+    },
     createdAt: Date.now(),
   };
   await set(newRef, user);
@@ -78,7 +121,31 @@ export async function deleteUser(userId: string): Promise<void> {
 export async function getUserById(userId: string): Promise<User | null> {
   const snap = await get(ref(db, `users/${userId}`));
   if (!snap.exists()) return null;
-  return { ...snap.val(), id: userId };
+  const u = snap.val();
+  const wins = u.wins || 0;
+  const draws = u.draws || 0;
+  const losses = u.losses || 0;
+  const points = u.points ?? (wins * 3 + draws * 1 - losses * 1);
+  const goalsFor = u.goalsFor || 0;
+  const goalsAgainst = u.goalsAgainst || 0;
+  const goalDifference = u.goalDifference ?? (goalsFor - goalsAgainst);
+
+  return {
+    ...u,
+    id: userId,
+    matchesPlayed: u.matchesPlayed || 0,
+    wins,
+    draws,
+    losses,
+    points,
+    goalsFor,
+    goalsAgainst,
+    goalDifference,
+    stats: {
+      dream: u.stats?.dream || createEmptyModeStats(),
+      auth: u.stats?.auth || createEmptyModeStats(),
+    },
+  };
 }
 
 // ==================== H2H OPERATIONS ====================
@@ -93,12 +160,18 @@ export function subscribeToH2H(userId: string, callback: (records: H2HRecord[]) 
         callback([]);
         return;
       }
-      const records: H2HRecord[] = Object.keys(data).map((key) => ({
-        opponentId: key,
-        opponentName: data[key].opponentName || 'Unknown',
-        wins: data[key].wins || 0,
-        losses: data[key].losses || 0,
-      }));
+      const records: H2HRecord[] = Object.keys(data).map((key) => {
+        const d = data[key];
+        return {
+          opponentId: key,
+          opponentName: d.opponentName || 'Unknown',
+          wins: d.wins || 0,
+          draws: d.draws || 0,
+          losses: d.losses || 0,
+          dream: d.dream || { wins: d.wins || 0, draws: d.draws || 0, losses: d.losses || 0 },
+          auth: d.auth || { wins: d.auth?.wins || 0, draws: d.auth?.draws || 0, losses: d.auth?.losses || 0 },
+        };
+      });
       callback(records);
     },
     (error) => {
@@ -110,36 +183,124 @@ export function subscribeToH2H(userId: string, callback: (records: H2HRecord[]) 
 }
 
 async function updateH2H(
-  winnerId: string,
-  winnerName: string,
-  loserId: string,
-  loserName: string
+  p1Id: string,
+  p1Name: string,
+  p2Id: string,
+  p2Name: string,
+  outcome: 'p1_win' | 'p2_win' | 'draw',
+  matchType: MatchType
 ): Promise<void> {
-  // Update winner's H2H record against loser
-  const winnerH2HRef = ref(db, `h2h/${winnerId}/${loserId}`);
-  const winnerSnap = await get(winnerH2HRef);
-  if (winnerSnap.exists()) {
-    const current = winnerSnap.val();
-    await update(winnerH2HRef, {
-      wins: (current.wins || 0) + 1,
-      opponentName: loserName,
-    });
-  } else {
-    await set(winnerH2HRef, { opponentName: loserName, wins: 1, losses: 0 });
-  }
+  // Update Player 1 H2H against Player 2
+  const p1H2HRef = ref(db, `h2h/${p1Id}/${p2Id}`);
+  const p1Snap = await get(p1H2HRef);
+  const p1Data = p1Snap.exists() ? p1Snap.val() : {};
 
-  // Update loser's H2H record against winner
-  const loserH2HRef = ref(db, `h2h/${loserId}/${winnerId}`);
-  const loserSnap = await get(loserH2HRef);
-  if (loserSnap.exists()) {
-    const current = loserSnap.val();
-    await update(loserH2HRef, {
-      losses: (current.losses || 0) + 1,
-      opponentName: winnerName,
-    });
-  } else {
-    await set(loserH2HRef, { opponentName: winnerName, wins: 0, losses: 1 });
-  }
+  const p1ModeH2H = p1Data[matchType] || { wins: 0, draws: 0, losses: 0 };
+  const p1Wins = (p1Data.wins || 0) + (outcome === 'p1_win' ? 1 : 0);
+  const p1Draws = (p1Data.draws || 0) + (outcome === 'draw' ? 1 : 0);
+  const p1Losses = (p1Data.losses || 0) + (outcome === 'p2_win' ? 1 : 0);
+
+  const p1MWins = (p1ModeH2H.wins || 0) + (outcome === 'p1_win' ? 1 : 0);
+  const p1MDraws = (p1ModeH2H.draws || 0) + (outcome === 'draw' ? 1 : 0);
+  const p1MLosses = (p1ModeH2H.losses || 0) + (outcome === 'p2_win' ? 1 : 0);
+
+  await set(p1H2HRef, {
+    ...p1Data,
+    opponentName: p2Name,
+    wins: p1Wins,
+    draws: p1Draws,
+    losses: p1Losses,
+    [matchType]: {
+      wins: p1MWins,
+      draws: p1MDraws,
+      losses: p1MLosses,
+    },
+  });
+
+  // Update Player 2 H2H against Player 1
+  const p2H2HRef = ref(db, `h2h/${p2Id}/${p1Id}`);
+  const p2Snap = await get(p2H2HRef);
+  const p2Data = p2Snap.exists() ? p2Snap.val() : {};
+
+  const p2ModeH2H = p2Data[matchType] || { wins: 0, draws: 0, losses: 0 };
+  const p2Wins = (p2Data.wins || 0) + (outcome === 'p2_win' ? 1 : 0);
+  const p2Draws = (p2Data.draws || 0) + (outcome === 'draw' ? 1 : 0);
+  const p2Losses = (p2Data.losses || 0) + (outcome === 'p1_win' ? 1 : 0);
+
+  const p2MWins = (p2ModeH2H.wins || 0) + (outcome === 'p2_win' ? 1 : 0);
+  const p2MDraws = (p2ModeH2H.draws || 0) + (outcome === 'draw' ? 1 : 0);
+  const p2MLosses = (p2ModeH2H.losses || 0) + (outcome === 'p1_win' ? 1 : 0);
+
+  await set(p2H2HRef, {
+    ...p2Data,
+    opponentName: p1Name,
+    wins: p2Wins,
+    draws: p2Draws,
+    losses: p2Losses,
+    [matchType]: {
+      wins: p2MWins,
+      draws: p2MDraws,
+      losses: p2MLosses,
+    },
+  });
+}
+
+// Helper function to update single user stats
+async function updateUserStats(
+  userId: string,
+  matchType: MatchType,
+  result: 'win' | 'draw' | 'loss',
+  goalsFor: number,
+  goalsAgainst: number
+): Promise<void> {
+  const userRef = ref(db, `users/${userId}`);
+  const snap = await get(userRef);
+  if (!snap.exists()) return;
+
+  const data = snap.val();
+
+  // Combined stats
+  const cPlayed = (data.matchesPlayed || 0) + 1;
+  const cWins = (data.wins || 0) + (result === 'win' ? 1 : 0);
+  const cDraws = (data.draws || 0) + (result === 'draw' ? 1 : 0);
+  const cLosses = (data.losses || 0) + (result === 'loss' ? 1 : 0);
+  const cPoints = cWins * 3 + cDraws * 1 - cLosses * 1;
+  const cGF = (data.goalsFor || 0) + goalsFor;
+  const cGA = (data.goalsAgainst || 0) + goalsAgainst;
+  const cGD = cGF - cGA;
+
+  // Mode stats
+  const modeStats = data.stats?.[matchType] || createEmptyModeStats();
+
+  const mPlayed = (modeStats.matchesPlayed || 0) + 1;
+  const mWins = (modeStats.wins || 0) + (result === 'win' ? 1 : 0);
+  const mDraws = (modeStats.draws || 0) + (result === 'draw' ? 1 : 0);
+  const mLosses = (modeStats.losses || 0) + (result === 'loss' ? 1 : 0);
+  const mPoints = mWins * 3 + mDraws * 1 - mLosses * 1;
+  const mGF = (modeStats.goalsFor || 0) + goalsFor;
+  const mGA = (modeStats.goalsAgainst || 0) + goalsAgainst;
+  const mGD = mGF - mGA;
+
+  await update(userRef, {
+    matchesPlayed: cPlayed,
+    wins: cWins,
+    draws: cDraws,
+    losses: cLosses,
+    points: cPoints,
+    goalsFor: cGF,
+    goalsAgainst: cGA,
+    goalDifference: cGD,
+    [`stats/${matchType}`]: {
+      matchesPlayed: mPlayed,
+      wins: mWins,
+      draws: mDraws,
+      losses: mLosses,
+      points: mPoints,
+      goalsFor: mGF,
+      goalsAgainst: mGA,
+      goalDifference: mGD,
+    },
+  });
 }
 
 // ==================== MATCH OPERATIONS ====================
@@ -158,6 +319,8 @@ export function subscribeToMatches(callback: (matches: Match[]) => void) {
         .map((key) => ({
           ...data[key],
           id: key,
+          matchType: data[key].matchType || 'dream',
+          isDraw: !!data[key].isDraw,
         }))
         .sort((a, b) => b.createdAt - a.createdAt);
       callback(matches);
@@ -181,7 +344,12 @@ export function subscribeToUserMatches(userId: string, callback: (matches: Match
         return;
       }
       const matches: Match[] = Object.keys(data)
-        .map((key) => ({ ...data[key], id: key }))
+        .map((key) => ({
+          ...data[key],
+          id: key,
+          matchType: data[key].matchType || 'dream',
+          isDraw: !!data[key].isDraw,
+        }))
         .filter((m) => m.player1Id === userId || m.player2Id === userId)
         .sort((a, b) => b.createdAt - a.createdAt);
       callback(matches);
@@ -201,7 +369,9 @@ export async function logMatch(matchData: {
   player2Name: string;
   player1Score: number;
   player2Score: number;
-  isPenalty: boolean;
+  matchType?: MatchType;
+  isDraw?: boolean;
+  isPenalty?: boolean;
   penaltyScore1?: number;
   penaltyScore2?: number;
   tournamentId?: string;
@@ -214,21 +384,26 @@ export async function logMatch(matchData: {
     player2Name,
     player1Score,
     player2Score,
-    isPenalty,
+    matchType = 'dream',
+    isDraw = false,
+    isPenalty = false,
     penaltyScore1,
     penaltyScore2,
     tournamentId,
     tournamentRound,
   } = matchData;
 
-  // Determine winner
-  let winnerId: string;
-  let loserId: string;
-  let winnerName: string;
-  let loserName: string;
+  let winnerId: string | undefined;
+  let loserId: string | undefined;
+  let winnerName: string | undefined;
+  let loserName: string | undefined;
 
-  if (isPenalty && penaltyScore1 !== undefined && penaltyScore2 !== undefined) {
-    // Penalty shootout - use penalty scores
+  if (isDraw) {
+    winnerId = undefined;
+    loserId = undefined;
+    winnerName = undefined;
+    loserName = undefined;
+  } else if (isPenalty && penaltyScore1 !== undefined && penaltyScore2 !== undefined) {
     winnerId = penaltyScore1 > penaltyScore2 ? player1Id : player2Id;
     loserId = penaltyScore1 > penaltyScore2 ? player2Id : player1Id;
     winnerName = penaltyScore1 > penaltyScore2 ? player1Name : player2Name;
@@ -247,13 +422,16 @@ export async function logMatch(matchData: {
     player2Name,
     player1Score,
     player2Score,
-    isPenalty: !!isPenalty,
-    winnerId,
-    loserId,
-    winnerName,
-    loserName,
+    matchType,
+    isDraw: !!isDraw,
+    isPenalty: !isDraw && !!isPenalty,
     createdAt: Date.now(),
   };
+
+  if (winnerId) match.winnerId = winnerId;
+  if (loserId) match.loserId = loserId;
+  if (winnerName) match.winnerName = winnerName;
+  if (loserName) match.loserName = loserName;
 
   if (isPenalty && penaltyScore1 !== undefined) match.penaltyScore1 = penaltyScore1;
   if (isPenalty && penaltyScore2 !== undefined) match.penaltyScore2 = penaltyScore2;
@@ -265,44 +443,17 @@ export async function logMatch(matchData: {
   const newRef = push(matchesRef);
   await set(newRef, match);
 
-  // Update Player 1 stats
-  const p1Ref = ref(db, `users/${player1Id}`);
-  const p1Snap = await get(p1Ref);
-  if (p1Snap.exists()) {
-    const d = p1Snap.val();
+  // Update Player 1 and Player 2 stats
+  if (isDraw) {
+    await updateUserStats(player1Id, matchType, 'draw', player1Score, player2Score);
+    await updateUserStats(player2Id, matchType, 'draw', player2Score, player1Score);
+    await updateH2H(player1Id, player1Name, player2Id, player2Name, 'draw', matchType);
+  } else {
     const isP1Winner = winnerId === player1Id;
-    const newGF = (d.goalsFor || 0) + player1Score;
-    const newGA = (d.goalsAgainst || 0) + player2Score;
-    await update(p1Ref, {
-      matchesPlayed: (d.matchesPlayed || 0) + 1,
-      wins: (d.wins || 0) + (isP1Winner ? 1 : 0),
-      losses: (d.losses || 0) + (isP1Winner ? 0 : 1),
-      goalsFor: newGF,
-      goalsAgainst: newGA,
-      goalDifference: newGF - newGA,
-    });
+    await updateUserStats(player1Id, matchType, isP1Winner ? 'win' : 'loss', player1Score, player2Score);
+    await updateUserStats(player2Id, matchType, isP1Winner ? 'loss' : 'win', player2Score, player1Score);
+    await updateH2H(player1Id, player1Name, player2Id, player2Name, isP1Winner ? 'p1_win' : 'p2_win', matchType);
   }
-
-  // Update Player 2 stats
-  const p2Ref = ref(db, `users/${player2Id}`);
-  const p2Snap = await get(p2Ref);
-  if (p2Snap.exists()) {
-    const d = p2Snap.val();
-    const isP2Winner = winnerId === player2Id;
-    const newGF = (d.goalsFor || 0) + player2Score;
-    const newGA = (d.goalsAgainst || 0) + player1Score;
-    await update(p2Ref, {
-      matchesPlayed: (d.matchesPlayed || 0) + 1,
-      wins: (d.wins || 0) + (isP2Winner ? 1 : 0),
-      losses: (d.losses || 0) + (isP2Winner ? 0 : 1),
-      goalsFor: newGF,
-      goalsAgainst: newGA,
-      goalDifference: newGF - newGA,
-    });
-  }
-
-  // Update H2H
-  await updateH2H(winnerId, winnerName, loserId, loserName);
 
   return newRef.key!;
 }
@@ -323,6 +474,7 @@ export function subscribeToTournaments(callback: (tournaments: Tournament[]) => 
         .map((key) => ({
           ...data[key],
           id: key,
+          matchType: data[key].matchType || 'dream',
         }))
         .sort((a, b) => b.createdAt - a.createdAt);
       callback(tournaments);
@@ -347,7 +499,12 @@ export function subscribeToTournament(
         callback(null);
         return;
       }
-      callback({ ...snapshot.val(), id: tournamentId });
+      const data = snapshot.val();
+      callback({
+        ...data,
+        id: tournamentId,
+        matchType: data.matchType || 'dream',
+      });
     },
     (error) => {
       console.warn('Firebase subscribeToTournament error:', error);
@@ -361,7 +518,8 @@ export async function createTournament(
   name: string,
   format: 4 | 8,
   pairings: Array<{ player1Id: string; player2Id: string }>,
-  userNames: Record<string, string>
+  userNames: Record<string, string>,
+  matchType: MatchType = 'dream'
 ): Promise<string> {
   const roster = pairings.flatMap((p) => [p.player1Id, p.player2Id]);
 
@@ -374,10 +532,11 @@ export async function createTournament(
         player2Id: p.player2Id,
         player1Name: userNames[p.player1Id] || 'Player 1',
         player2Name: userNames[p.player2Id] || 'Player 2',
+        matchType,
         completed: false,
       })),
-      thirdPlace: { completed: false },
-      final: { completed: false },
+      thirdPlace: { matchType, completed: false },
+      final: { matchType, completed: false },
     };
   } else {
     bracket = {
@@ -386,20 +545,22 @@ export async function createTournament(
         player2Id: p.player2Id,
         player1Name: userNames[p.player1Id] || 'Player 1',
         player2Name: userNames[p.player2Id] || 'Player 2',
+        matchType,
         completed: false,
       })),
       semiFinals: [
-        { completed: false },
-        { completed: false },
+        { matchType, completed: false },
+        { matchType, completed: false },
       ],
-      thirdPlace: { completed: false },
-      final: { completed: false },
+      thirdPlace: { matchType, completed: false },
+      final: { matchType, completed: false },
     };
   }
 
   const tournament: Omit<Tournament, 'id'> = {
     name,
     format,
+    matchType,
     status: 'in_progress',
     roster,
     rosterNames: userNames,
@@ -420,7 +581,9 @@ export async function submitTournamentMatchResult(
   matchData: {
     player1Score: number;
     player2Score: number;
-    isPenalty: boolean;
+    matchType?: MatchType;
+    isDraw?: boolean;
+    isPenalty?: boolean;
     penaltyScore1?: number;
     penaltyScore2?: number;
   }
@@ -431,6 +594,7 @@ export async function submitTournamentMatchResult(
 
   const tournament: Tournament = { ...snap.val(), id: tournamentId };
   const bracket = tournament.bracket;
+  const matchType = matchData.matchType || tournament.matchType || 'dream';
 
   let matchSlot: TournamentMatch | undefined;
 
@@ -456,6 +620,8 @@ export async function submitTournamentMatchResult(
     player2Name: matchSlot.player2Name || '',
     player1Score: matchData.player1Score,
     player2Score: matchData.player2Score,
+    matchType,
+    isDraw: matchData.isDraw,
     isPenalty: matchData.isPenalty,
     penaltyScore1: matchData.penaltyScore1,
     penaltyScore2: matchData.penaltyScore2,
@@ -463,22 +629,25 @@ export async function submitTournamentMatchResult(
     tournamentRound: round,
   });
 
-  // Determine winner/loser
+  // Determine winner/loser for bracket progression
   let winnerId: string;
   let loserId: string;
-  let winnerName: string;
-  let loserName: string;
 
   if (matchData.isPenalty && matchData.penaltyScore1 !== undefined && matchData.penaltyScore2 !== undefined) {
     winnerId = matchData.penaltyScore1 > matchData.penaltyScore2 ? matchSlot.player1Id : matchSlot.player2Id;
     loserId = matchData.penaltyScore1 > matchData.penaltyScore2 ? matchSlot.player2Id : matchSlot.player1Id;
-    winnerName = matchData.penaltyScore1 > matchData.penaltyScore2 ? matchSlot.player1Name! : matchSlot.player2Name!;
-    loserName = matchData.penaltyScore1 > matchData.penaltyScore2 ? matchSlot.player2Name! : matchSlot.player1Name!;
-  } else {
+  } else if (matchData.player1Score !== matchData.player2Score) {
     winnerId = matchData.player1Score > matchData.player2Score ? matchSlot.player1Id : matchSlot.player2Id;
     loserId = matchData.player1Score > matchData.player2Score ? matchSlot.player2Id : matchSlot.player1Id;
-    winnerName = matchData.player1Score > matchData.player2Score ? matchSlot.player1Name! : matchSlot.player2Name!;
-    loserName = matchData.player1Score > matchData.player2Score ? matchSlot.player2Name! : matchSlot.player1Name!;
+  } else {
+    // If score tied & isDraw is true, bracket still needs a winner to advance. If penalty scores provided, use them; else fallback to P1
+    if (matchData.penaltyScore1 !== undefined && matchData.penaltyScore2 !== undefined) {
+      winnerId = matchData.penaltyScore1 > matchData.penaltyScore2 ? matchSlot.player1Id : matchSlot.player2Id;
+      loserId = matchData.penaltyScore1 > matchData.penaltyScore2 ? matchSlot.player2Id : matchSlot.player1Id;
+    } else {
+      winnerId = matchSlot.player1Id;
+      loserId = matchSlot.player2Id;
+    }
   }
 
   // Update the match slot in bracket
@@ -486,7 +655,9 @@ export async function submitTournamentMatchResult(
     ...matchSlot,
     player1Score: matchData.player1Score,
     player2Score: matchData.player2Score,
-    isPenalty: matchData.isPenalty,
+    matchType,
+    isDraw: !!matchData.isDraw,
+    isPenalty: !!matchData.isPenalty,
     winnerId,
     loserId,
     matchId,
@@ -510,54 +681,51 @@ export async function submitTournamentMatchResult(
   if (round === 'quarterFinals') {
     updates[`tournaments/${tournamentId}/bracket/quarterFinals/${matchIndex}`] = cleanUpdatedSlot;
 
-    // Check if we can fill semi-finals
     const qf = bracket.quarterFinals!;
-    // Temporarily update the current match
     const updatedQF = [...qf];
     updatedQF[matchIndex] = updatedSlot;
 
-    // QF0 winner vs QF1 winner -> SF0
     if (updatedQF[0].completed && updatedQF[1].completed) {
       updates[`tournaments/${tournamentId}/bracket/semiFinals/0`] = {
         player1Id: updatedQF[0].winnerId,
         player2Id: updatedQF[1].winnerId,
         player1Name: updatedQF[0].winnerId === updatedQF[0].player1Id ? updatedQF[0].player1Name : updatedQF[0].player2Name,
         player2Name: updatedQF[1].winnerId === updatedQF[1].player1Id ? updatedQF[1].player1Name : updatedQF[1].player2Name,
+        matchType,
         completed: false,
       };
     }
-    // QF2 winner vs QF3 winner -> SF1
     if (updatedQF[2].completed && updatedQF[3].completed) {
       updates[`tournaments/${tournamentId}/bracket/semiFinals/1`] = {
         player1Id: updatedQF[2].winnerId,
         player2Id: updatedQF[3].winnerId,
         player1Name: updatedQF[2].winnerId === updatedQF[2].player1Id ? updatedQF[2].player1Name : updatedQF[2].player2Name,
         player2Name: updatedQF[3].winnerId === updatedQF[3].player1Id ? updatedQF[3].player1Name : updatedQF[3].player2Name,
+        matchType,
         completed: false,
       };
     }
   } else if (round === 'semiFinals') {
     updates[`tournaments/${tournamentId}/bracket/semiFinals/${matchIndex}`] = cleanUpdatedSlot;
 
-    // Check if both semis complete -> fill final & 3rd place
     const updatedSF = [...bracket.semiFinals];
     updatedSF[matchIndex] = updatedSlot;
 
     if (updatedSF[0].completed && updatedSF[1].completed) {
-      // Winners go to final
       updates[`tournaments/${tournamentId}/bracket/final`] = {
         player1Id: updatedSF[0].winnerId,
         player2Id: updatedSF[1].winnerId,
         player1Name: updatedSF[0].winnerId === updatedSF[0].player1Id ? updatedSF[0].player1Name : updatedSF[0].player2Name,
         player2Name: updatedSF[1].winnerId === updatedSF[1].player1Id ? updatedSF[1].player1Name : updatedSF[1].player2Name,
+        matchType,
         completed: false,
       };
-      // Losers go to 3rd place
       updates[`tournaments/${tournamentId}/bracket/thirdPlace`] = {
         player1Id: updatedSF[0].loserId,
         player2Id: updatedSF[1].loserId,
         player1Name: updatedSF[0].loserId === updatedSF[0].player1Id ? updatedSF[0].player1Name : updatedSF[0].player2Name,
-        player2Name: updatedSF[1].loserId === updatedSF[1].player1Id ? updatedSF[1].player1Name : updatedSF[1].player2Name,
+        player2Name: updatedSF[1].loserId === updatedSF[1].player1Id ? updatedSF[1].player2Name : updatedSF[1].player2Name,
+        matchType,
         completed: false,
       };
     }
@@ -571,7 +739,6 @@ export async function submitTournamentMatchResult(
     updates[`tournaments/${tournamentId}/standings/second`] = loserId;
   }
 
-  // Check if tournament is complete (both final and 3rd place done)
   const isFinalDone = round === 'final' || bracket.final.completed;
   const isThirdDone = round === 'thirdPlace' || bracket.thirdPlace.completed;
 
