@@ -361,7 +361,7 @@ export default function UserProfilePage({ params }: { params: Promise<{ id: stri
             </h2>
           </div>
           <div className="p-5">
-            <ActivityChart matches={matches} />
+            <ActivityChart matches={matches.filter((m) => (m.status || 'approved') === 'approved')} />
           </div>
         </div>
       </div>
@@ -372,7 +372,7 @@ export default function UserProfilePage({ params }: { params: Promise<{ id: stri
           <h2 className="font-heading font-bold text-lg uppercase tracking-wide accent-bar">
             Match History
           </h2>
-          <span className="text-xs text-text-muted">{matches.length} matches played</span>
+          <span className="text-xs text-text-muted">{matches.length} matches logged</span>
         </div>
 
         {matches.length === 0 ? (
@@ -385,6 +385,7 @@ export default function UserProfilePage({ params }: { params: Promise<{ id: stri
                   <th>Opponent</th>
                   <th className="text-center">Score</th>
                   <th className="text-center">Result</th>
+                  <th className="text-center">Status</th>
                   <th className="text-center">Mode</th>
                   <th className="text-center">Type</th>
                   <th>Date</th>
@@ -418,6 +419,21 @@ export default function UserProfilePage({ params }: { params: Promise<{ id: stri
                         )}
                       </td>
                       <td className="text-center">{resultBadge}</td>
+                      <td className="text-center">
+                        {match.status === 'pending' ? (
+                          <span className="px-2 py-0.5 rounded text-[0.6rem] font-heading font-bold uppercase bg-amber-500/15 text-amber-400 border border-amber-500/30 animate-pulse">
+                            Pending
+                          </span>
+                        ) : match.status === 'rejected' ? (
+                          <span className="px-2 py-0.5 rounded text-[0.6rem] font-heading font-bold uppercase bg-red/15 text-red border border-red/30">
+                            Rejected
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded text-[0.6rem] font-heading font-bold uppercase bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                            Approved
+                          </span>
+                        )}
+                      </td>
                       <td className="text-center">
                         <span className={`px-2 py-0.5 rounded text-[0.6rem] font-heading font-bold uppercase tracking-wider ${
                           match.matchType === 'auth' ? 'bg-purple-500/15 text-purple-400 border border-purple-500/30' : 'bg-cyan/15 text-cyan border border-cyan/30'

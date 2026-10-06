@@ -348,9 +348,13 @@ export default function TournamentDetailPage({ params }: { params: Promise<{ id:
             <h3 className="font-heading font-bold text-lg text-center uppercase tracking-wide mb-1">
               Submit Match Result
             </h3>
-            <p className="text-center text-text-muted text-xs font-heading uppercase tracking-widest mb-4">
+            <p className="text-center text-text-muted text-xs font-heading uppercase tracking-widest mb-3">
               {modalData.round.replace(/([A-Z])/g, ' $1').trim()}
             </p>
+
+            <div className="mb-4 p-2.5 rounded-lg bg-volt/10 border border-volt/25 text-volt text-[0.7rem] font-heading font-bold text-center flex items-center justify-center gap-1.5">
+              <span>⚡ Tournament Match: Instant Leaderboard Update & Zero Cooldown</span>
+            </div>
 
             {/* Match Mode Option */}
             <div className="mb-4">

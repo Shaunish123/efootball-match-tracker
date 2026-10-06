@@ -10,7 +10,7 @@ import {
   off,
   DataSnapshot,
 } from 'firebase/database';
-import { User, Match, Tournament, TournamentMatch, TournamentBracket, H2HRecord, MatchType, ModeStats } from './types';
+import { User, Match, MatchStatus, Tournament, TournamentMatch, TournamentBracket, H2HRecord, MatchType, ModeStats } from './types';
 
 // Helper for default mode stats
 function createEmptyModeStats(): ModeStats {
@@ -335,6 +335,10 @@ export function subscribeToMatches(callback: (matches: Match[]) => void) {
             loserName,
             matchType: item.matchType || 'dream',
             isDraw: !!item.isDraw,
+            status: (item.status || 'approved') as MatchStatus,
+            isTournament: !!(item.tournamentId || item.isTournament),
+            submittedAt: item.submittedAt || new Date(item.createdAt || Date.now()).toISOString(),
+            approvedAt: item.approvedAt ?? ((item.status === 'pending' || item.status === 'rejected') ? null : new Date(item.createdAt || Date.now()).toISOString()),
           };
         })
         .sort((a, b) => b.createdAt - a.createdAt);
@@ -378,6 +382,10 @@ export function subscribeToUserMatches(userId: string, callback: (matches: Match
             loserName,
             matchType: item.matchType || 'dream',
             isDraw: !!item.isDraw,
+            status: (item.status || 'approved') as MatchStatus,
+            isTournament: !!(item.tournamentId || item.isTournament),
+            submittedAt: item.submittedAt || new Date(item.createdAt || Date.now()).toISOString(),
+            approvedAt: item.approvedAt ?? ((item.status === 'pending' || item.status === 'rejected') ? null : new Date(item.createdAt || Date.now()).toISOString()),
           };
         })
         .filter((m) => m.player1Id === userId || m.player2Id === userId)
@@ -406,6 +414,9 @@ export async function logMatch(matchData: {
   penaltyScore2?: number;
   tournamentId?: string;
   tournamentRound?: string;
+  status?: MatchStatus;
+  submittedAt?: string;
+  approvedAt?: string | null;
 }): Promise<string> {
   const {
     player1Id,
@@ -421,7 +432,14 @@ export async function logMatch(matchData: {
     penaltyScore2,
     tournamentId,
     tournamentRound,
+    status: explicitStatus,
+    submittedAt,
+    approvedAt,
   } = matchData;
+
+  // Determine status: Tournament matches are immediately approved; casual matches default to 'pending' unless explicitly approved
+  const isTournament = !!tournamentId;
+  const status: MatchStatus = explicitStatus || (isTournament ? 'approved' : 'pending');
 
   let winnerId: string | undefined;
   let loserId: string | undefined;
@@ -445,6 +463,9 @@ export async function logMatch(matchData: {
     loserName = player1Score > player2Score ? player2Name : player1Name;
   }
 
+  const now = Date.now();
+  const isoNow = new Date(now).toISOString();
+
   const match: Record<string, any> = {
     player1Id,
     player2Id,
@@ -455,7 +476,14 @@ export async function logMatch(matchData: {
     matchType,
     isDraw: !!isDraw,
     isPenalty: !isDraw && !!isPenalty,
-    createdAt: Date.now(),
+    isPenalties: !isDraw && !!isPenalty,
+    player1PenScore: isPenalty && penaltyScore1 !== undefined ? penaltyScore1 : null,
+    player2PenScore: isPenalty && penaltyScore2 !== undefined ? penaltyScore2 : null,
+    status,
+    isTournament,
+    submittedAt: submittedAt || isoNow,
+    approvedAt: status === 'approved' ? (approvedAt || isoNow) : null,
+    createdAt: now,
   };
 
   if (winnerId) match.winnerId = winnerId;
@@ -468,24 +496,441 @@ export async function logMatch(matchData: {
   if (tournamentId) match.tournamentId = tournamentId;
   if (tournamentRound) match.tournamentRound = tournamentRound;
 
-  // Save match
+  // Save match to Firebase RTDB
   const matchesRef = ref(db, 'matches');
   const newRef = push(matchesRef);
   await set(newRef, match);
 
-  // Update Player 1 and Player 2 stats
-  if (isDraw) {
-    await updateUserStats(player1Id, matchType, 'draw', player1Score, player2Score);
-    await updateUserStats(player2Id, matchType, 'draw', player2Score, player1Score);
-    await updateH2H(player1Id, player1Name, player2Id, player2Name, 'draw', matchType);
-  } else {
-    const isP1Winner = winnerId === player1Id;
-    await updateUserStats(player1Id, matchType, isP1Winner ? 'win' : 'loss', player1Score, player2Score);
-    await updateUserStats(player2Id, matchType, isP1Winner ? 'loss' : 'win', player2Score, player1Score);
-    await updateH2H(player1Id, player1Name, player2Id, player2Name, isP1Winner ? 'p1_win' : 'p2_win', matchType);
+  // Critical Stat Rule: ONLY approved matches affect player stats and leaderboards!
+  if (status === 'approved') {
+    if (isDraw) {
+      await updateUserStats(player1Id, matchType, 'draw', player1Score, player2Score);
+      await updateUserStats(player2Id, matchType, 'draw', player2Score, player1Score);
+      await updateH2H(player1Id, player1Name, player2Id, player2Name, 'draw', matchType);
+    } else {
+      const isP1Winner = winnerId === player1Id;
+      await updateUserStats(player1Id, matchType, isP1Winner ? 'win' : 'loss', player1Score, player2Score);
+      await updateUserStats(player2Id, matchType, isP1Winner ? 'loss' : 'win', player2Score, player1Score);
+      await updateH2H(player1Id, player1Name, player2Id, player2Name, isP1Winner ? 'p1_win' : 'p2_win', matchType);
+    }
   }
 
   return newRef.key!;
+}
+
+/**
+ * Approve a pending match: updates status to approved and recalculates stats.
+ */
+export async function approveMatch(matchId: string): Promise<void> {
+  const matchRef = ref(db, `matches/${matchId}`);
+  const snap = await get(matchRef);
+  if (!snap.exists()) throw new Error('Match not found');
+
+  const match = snap.val();
+  if (match.status === 'approved') return; // already approved
+
+  await update(matchRef, {
+    status: 'approved',
+    approvedAt: new Date().toISOString(),
+  });
+
+  // Re-calculate user stats and leaderboards across all approved matches
+  await recalculateAllUserStats();
+}
+
+/**
+ * Deny a pending match: marks as rejected or permanently deletes.
+ */
+export async function denyMatch(matchId: string, permanentlyDelete: boolean = false): Promise<void> {
+  const matchRef = ref(db, `matches/${matchId}`);
+  const snap = await get(matchRef);
+  if (!snap.exists()) throw new Error('Match not found');
+
+  const match = snap.val();
+  const wasApproved = (match.status || 'approved') === 'approved';
+
+  if (permanentlyDelete) {
+    if (wasApproved) {
+      await deleteMatch(matchId);
+    } else {
+      await remove(matchRef);
+    }
+    return;
+  }
+
+  // Mark as rejected
+  await update(matchRef, {
+    status: 'rejected',
+    rejectedAt: new Date().toISOString(),
+  });
+
+  // If it was previously approved, re-calculate stats to remove its impact
+  if (wasApproved) {
+    await recalculateAllUserStats();
+  }
+}
+
+/**
+ * Recalculates stats and H2H records for all users based purely on approved matches.
+ */
+export async function recalculateAllUserStats(): Promise<void> {
+  const usersSnap = await get(ref(db, 'users'));
+  const matchesSnap = await get(ref(db, 'matches'));
+
+  if (!usersSnap.exists()) return;
+  const usersData = usersSnap.val();
+  const userIds = Object.keys(usersData);
+
+  // Initialize clean stats for every user
+  const newStats: Record<string, any> = {};
+  for (const uid of userIds) {
+    newStats[uid] = {
+      matchesPlayed: 0,
+      wins: 0,
+      draws: 0,
+      losses: 0,
+      points: 0,
+      goalsFor: 0,
+      goalsAgainst: 0,
+      goalDifference: 0,
+      stats: {
+        dream: createEmptyModeStats(),
+        auth: createEmptyModeStats(),
+      },
+    };
+  }
+
+  const newH2H: Record<string, Record<string, any>> = {};
+
+  if (matchesSnap.exists()) {
+    const matchesData = matchesSnap.val();
+    const matchKeys = Object.keys(matchesData);
+
+    for (const mk of matchKeys) {
+      const m = matchesData[mk];
+      const isApproved = (m.status || 'approved') === 'approved';
+      if (!isApproved) continue; // Pending or rejected matches MUST NOT count
+
+      const p1 = m.player1Id;
+      const p2 = m.player2Id;
+      const mType: MatchType = m.matchType || 'dream';
+      const s1 = Number(m.player1Score) || 0;
+      const s2 = Number(m.player2Score) || 0;
+      const isDraw = !!m.isDraw;
+
+      let p1Win = false;
+      let p2Win = false;
+
+      if (!isDraw) {
+        if (m.winnerId) {
+          p1Win = m.winnerId === p1;
+          p2Win = m.winnerId === p2;
+        } else if (m.isPenalty && m.penaltyScore1 !== undefined && m.penaltyScore2 !== undefined) {
+          p1Win = m.penaltyScore1 > m.penaltyScore2;
+          p2Win = m.penaltyScore2 > m.penaltyScore1;
+        } else {
+          p1Win = s1 > s2;
+          p2Win = s2 > s1;
+        }
+      }
+
+      // Update Player 1
+      if (newStats[p1]) {
+        const u = newStats[p1];
+        u.matchesPlayed += 1;
+        u.goalsFor += s1;
+        u.goalsAgainst += s2;
+        u.goalDifference = u.goalsFor - u.goalsAgainst;
+
+        const ms = u.stats[mType] || createEmptyModeStats();
+        ms.matchesPlayed += 1;
+        ms.goalsFor += s1;
+        ms.goalsAgainst += s2;
+        ms.goalDifference = ms.goalsFor - ms.goalsAgainst;
+
+        if (isDraw) {
+          u.draws += 1;
+          ms.draws += 1;
+        } else if (p1Win) {
+          u.wins += 1;
+          ms.wins += 1;
+        } else {
+          u.losses += 1;
+          ms.losses += 1;
+        }
+        u.points = u.wins * 3 + u.draws * 1 - u.losses * 1;
+        ms.points = ms.wins * 3 + ms.draws * 1 - ms.losses * 1;
+        u.stats[mType] = ms;
+      }
+
+      // Update Player 2
+      if (newStats[p2]) {
+        const u = newStats[p2];
+        u.matchesPlayed += 1;
+        u.goalsFor += s2;
+        u.goalsAgainst += s1;
+        u.goalDifference = u.goalsFor - u.goalsAgainst;
+
+        const ms = u.stats[mType] || createEmptyModeStats();
+        ms.matchesPlayed += 1;
+        ms.goalsFor += s2;
+        ms.goalsAgainst += s1;
+        ms.goalDifference = ms.goalsFor - ms.goalsAgainst;
+
+        if (isDraw) {
+          u.draws += 1;
+          ms.draws += 1;
+        } else if (p2Win) {
+          u.wins += 1;
+          ms.wins += 1;
+        } else {
+          u.losses += 1;
+          ms.losses += 1;
+        }
+        u.points = u.wins * 3 + u.draws * 1 - u.losses * 1;
+        ms.points = ms.wins * 3 + ms.draws * 1 - ms.losses * 1;
+        u.stats[mType] = ms;
+      }
+
+      // Update H2H
+      const p1Name = usersData[p1]?.displayName || m.player1Name || 'Player 1';
+      const p2Name = usersData[p2]?.displayName || m.player2Name || 'Player 2';
+
+      if (!newH2H[p1]) newH2H[p1] = {};
+      if (!newH2H[p1][p2]) {
+        newH2H[p1][p2] = {
+          opponentName: p2Name,
+          wins: 0,
+          draws: 0,
+          losses: 0,
+          dream: { wins: 0, draws: 0, losses: 0 },
+          auth: { wins: 0, draws: 0, losses: 0 },
+        };
+      }
+      if (!newH2H[p2]) newH2H[p2] = {};
+      if (!newH2H[p2][p1]) {
+        newH2H[p2][p1] = {
+          opponentName: p1Name,
+          wins: 0,
+          draws: 0,
+          losses: 0,
+          dream: { wins: 0, draws: 0, losses: 0 },
+          auth: { wins: 0, draws: 0, losses: 0 },
+        };
+      }
+
+      const outcome = isDraw ? 'draw' : p1Win ? 'p1_win' : 'p2_win';
+      if (outcome === 'draw') {
+        newH2H[p1][p2].draws += 1;
+        newH2H[p1][p2][mType].draws += 1;
+        newH2H[p2][p1].draws += 1;
+        newH2H[p2][p1][mType].draws += 1;
+      } else if (outcome === 'p1_win') {
+        newH2H[p1][p2].wins += 1;
+        newH2H[p1][p2][mType].wins += 1;
+        newH2H[p2][p1].losses += 1;
+        newH2H[p2][p1][mType].losses += 1;
+      } else {
+        newH2H[p1][p2].losses += 1;
+        newH2H[p1][p2][mType].losses += 1;
+        newH2H[p2][p1].wins += 1;
+        newH2H[p2][p1][mType].wins += 1;
+      }
+    }
+  }
+
+  // Construct batch update
+  const updates: Record<string, any> = {};
+  for (const uid of userIds) {
+    const s = newStats[uid];
+    updates[`users/${uid}/matchesPlayed`] = s.matchesPlayed;
+    updates[`users/${uid}/wins`] = s.wins;
+    updates[`users/${uid}/draws`] = s.draws;
+    updates[`users/${uid}/losses`] = s.losses;
+    updates[`users/${uid}/points`] = s.points;
+    updates[`users/${uid}/goalsFor`] = s.goalsFor;
+    updates[`users/${uid}/goalsAgainst`] = s.goalsAgainst;
+    updates[`users/${uid}/goalDifference`] = s.goalDifference;
+    updates[`users/${uid}/stats`] = s.stats;
+  }
+  // Replace h2h table
+  updates['h2h'] = newH2H;
+
+  await update(ref(db), updates);
+}
+
+
+// ==================== DELETE MATCH (REVERSE STATS) ====================
+
+async function reverseH2H(
+  p1Id: string,
+  p2Id: string,
+  outcome: 'p1_win' | 'p2_win' | 'draw',
+  matchType: MatchType
+): Promise<void> {
+  // Reverse Player 1's H2H against Player 2
+  const p1H2HRef = ref(db, `h2h/${p1Id}/${p2Id}`);
+  const p1Snap = await get(p1H2HRef);
+  if (p1Snap.exists()) {
+    const p1Data = p1Snap.val();
+    const p1ModeH2H = p1Data[matchType] || { wins: 0, draws: 0, losses: 0 };
+
+    const updatedP1: Record<string, any> = {
+      ...p1Data,
+      wins: Math.max(0, (p1Data.wins || 0) - (outcome === 'p1_win' ? 1 : 0)),
+      draws: Math.max(0, (p1Data.draws || 0) - (outcome === 'draw' ? 1 : 0)),
+      losses: Math.max(0, (p1Data.losses || 0) - (outcome === 'p2_win' ? 1 : 0)),
+      [matchType]: {
+        wins: Math.max(0, (p1ModeH2H.wins || 0) - (outcome === 'p1_win' ? 1 : 0)),
+        draws: Math.max(0, (p1ModeH2H.draws || 0) - (outcome === 'draw' ? 1 : 0)),
+        losses: Math.max(0, (p1ModeH2H.losses || 0) - (outcome === 'p2_win' ? 1 : 0)),
+      },
+    };
+
+    // If all zeroes, remove the H2H record entirely
+    const totalGames = updatedP1.wins + updatedP1.draws + updatedP1.losses;
+    if (totalGames <= 0) {
+      await remove(p1H2HRef);
+    } else {
+      await set(p1H2HRef, updatedP1);
+    }
+  }
+
+  // Reverse Player 2's H2H against Player 1
+  const p2H2HRef = ref(db, `h2h/${p2Id}/${p1Id}`);
+  const p2Snap = await get(p2H2HRef);
+  if (p2Snap.exists()) {
+    const p2Data = p2Snap.val();
+    const p2ModeH2H = p2Data[matchType] || { wins: 0, draws: 0, losses: 0 };
+
+    const updatedP2: Record<string, any> = {
+      ...p2Data,
+      wins: Math.max(0, (p2Data.wins || 0) - (outcome === 'p2_win' ? 1 : 0)),
+      draws: Math.max(0, (p2Data.draws || 0) - (outcome === 'draw' ? 1 : 0)),
+      losses: Math.max(0, (p2Data.losses || 0) - (outcome === 'p1_win' ? 1 : 0)),
+      [matchType]: {
+        wins: Math.max(0, (p2ModeH2H.wins || 0) - (outcome === 'p2_win' ? 1 : 0)),
+        draws: Math.max(0, (p2ModeH2H.draws || 0) - (outcome === 'draw' ? 1 : 0)),
+        losses: Math.max(0, (p2ModeH2H.losses || 0) - (outcome === 'p1_win' ? 1 : 0)),
+      },
+    };
+
+    const totalGames = updatedP2.wins + updatedP2.draws + updatedP2.losses;
+    if (totalGames <= 0) {
+      await remove(p2H2HRef);
+    } else {
+      await set(p2H2HRef, updatedP2);
+    }
+  }
+}
+
+async function reverseUserStats(
+  userId: string,
+  matchType: MatchType,
+  result: 'win' | 'draw' | 'loss',
+  goalsFor: number,
+  goalsAgainst: number
+): Promise<void> {
+  const userRef = ref(db, `users/${userId}`);
+  const snap = await get(userRef);
+  if (!snap.exists()) return;
+
+  const data = snap.val();
+
+  // Reverse combined stats
+  const cPlayed = Math.max(0, (data.matchesPlayed || 0) - 1);
+  const cWins = Math.max(0, (data.wins || 0) - (result === 'win' ? 1 : 0));
+  const cDraws = Math.max(0, (data.draws || 0) - (result === 'draw' ? 1 : 0));
+  const cLosses = Math.max(0, (data.losses || 0) - (result === 'loss' ? 1 : 0));
+  const cPoints = cWins * 3 + cDraws * 1 - cLosses * 1;
+  const cGF = Math.max(0, (data.goalsFor || 0) - goalsFor);
+  const cGA = Math.max(0, (data.goalsAgainst || 0) - goalsAgainst);
+  const cGD = cGF - cGA;
+
+  // Reverse mode-specific stats
+  const modeStats = data.stats?.[matchType] || createEmptyModeStats();
+  const mPlayed = Math.max(0, (modeStats.matchesPlayed || 0) - 1);
+  const mWins = Math.max(0, (modeStats.wins || 0) - (result === 'win' ? 1 : 0));
+  const mDraws = Math.max(0, (modeStats.draws || 0) - (result === 'draw' ? 1 : 0));
+  const mLosses = Math.max(0, (modeStats.losses || 0) - (result === 'loss' ? 1 : 0));
+  const mPoints = mWins * 3 + mDraws * 1 - mLosses * 1;
+  const mGF = Math.max(0, (modeStats.goalsFor || 0) - goalsFor);
+  const mGA = Math.max(0, (modeStats.goalsAgainst || 0) - goalsAgainst);
+  const mGD = mGF - mGA;
+
+  await update(userRef, {
+    matchesPlayed: cPlayed,
+    wins: cWins,
+    draws: cDraws,
+    losses: cLosses,
+    points: cPoints,
+    goalsFor: cGF,
+    goalsAgainst: cGA,
+    goalDifference: cGD,
+    [`stats/${matchType}`]: {
+      matchesPlayed: mPlayed,
+      wins: mWins,
+      draws: mDraws,
+      losses: mLosses,
+      points: mPoints,
+      goalsFor: mGF,
+      goalsAgainst: mGA,
+      goalDifference: mGD,
+    },
+  });
+}
+
+export async function deleteMatch(matchId: string): Promise<void> {
+  // 1. Read the match data
+  const matchRef = ref(db, `matches/${matchId}`);
+  const snap = await get(matchRef);
+  if (!snap.exists()) throw new Error('Match not found');
+
+  const match = snap.val();
+  const {
+    player1Id,
+    player2Id,
+    player1Score,
+    player2Score,
+    matchType = 'dream' as MatchType,
+    isDraw,
+    tournamentId,
+  } = match;
+
+  // 2. Block deletion of tournament matches
+  if (tournamentId) {
+    throw new Error('Cannot delete tournament matches — they are tied to bracket progression.');
+  }
+
+  // If match was pending or rejected, it never contributed to stats
+  if (match.status === 'pending' || match.status === 'rejected') {
+    await remove(matchRef);
+    return;
+  }
+
+  // 3. Determine original outcome
+  const winnerId = match.winnerId;
+
+  // 4. Reverse user stats for both players
+  if (isDraw) {
+    await reverseUserStats(player1Id, matchType, 'draw', player1Score, player2Score);
+    await reverseUserStats(player2Id, matchType, 'draw', player2Score, player1Score);
+  } else {
+    const isP1Winner = winnerId === player1Id;
+    await reverseUserStats(player1Id, matchType, isP1Winner ? 'win' : 'loss', player1Score, player2Score);
+    await reverseUserStats(player2Id, matchType, isP1Winner ? 'loss' : 'win', player2Score, player1Score);
+  }
+
+  // 5. Reverse H2H records
+  if (isDraw) {
+    await reverseH2H(player1Id, player2Id, 'draw', matchType);
+  } else {
+    const isP1Winner = winnerId === player1Id;
+    await reverseH2H(player1Id, player2Id, isP1Winner ? 'p1_win' : 'p2_win', matchType);
+  }
+
+  // 6. Delete the match record
+  await remove(matchRef);
 }
 
 // Helper to sanitize and auto-heal tournament bracket data (recomputes thirdPlace & final slots from SF winners/losers if needed)
@@ -731,6 +1176,7 @@ export async function submitTournamentMatchResult(
     penaltyScore2: matchData.penaltyScore2,
     tournamentId,
     tournamentRound: round,
+    status: 'approved',
   });
 
   // Determine winner/loser for bracket progression

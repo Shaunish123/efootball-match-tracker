@@ -47,6 +47,8 @@ export interface H2HRecord {
   auth?: ModeH2H;
 }
 
+export type MatchStatus = 'pending' | 'approved' | 'rejected';
+
 export interface Match {
   id: string;
   player1Id: string;
@@ -58,14 +60,21 @@ export interface Match {
   matchType: MatchType;
   isDraw: boolean;
   isPenalty: boolean;
+  isPenalties?: boolean;
   penaltyScore1?: number;
   penaltyScore2?: number;
+  player1PenScore?: number | null;
+  player2PenScore?: number | null;
   winnerId?: string;
   loserId?: string;
   winnerName?: string;
   loserName?: string;
+  isTournament?: boolean;
   tournamentId?: string;
   tournamentRound?: string;
+  status: MatchStatus;
+  submittedAt?: string;
+  approvedAt?: string | null;
   createdAt: number;
 }
 

@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { subscribeToMatches } from '@/lib/db';
 
 const navItems = [
   {
@@ -41,11 +42,29 @@ const navItems = [
       </svg>
     ),
   },
+  {
+    href: '/admin',
+    label: 'Admin Portal',
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+      </svg>
+    ),
+  },
 ];
 
 export default function Sidebar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
+
+  useEffect(() => {
+    const unsub = subscribeToMatches((matches) => {
+      const count = matches.filter((m) => m.status === 'pending').length;
+      setPendingCount(count);
+    });
+    return () => unsub();
+  }, []);
 
   const isActive = (href: string) => {
     if (href === '/') return pathname === '/';
@@ -129,7 +148,12 @@ export default function Sidebar() {
                 <span className={active ? 'text-volt' : 'text-text-muted group-hover:text-text-secondary'}>
                   {item.icon}
                 </span>
-                {item.label}
+                <span className="flex-1">{item.label}</span>
+                {item.href === '/admin' && pendingCount > 0 && (
+                  <span className="px-2 py-0.5 text-[0.65rem] font-bold rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/40 animate-pulse">
+                    {pendingCount}
+                  </span>
+                )}
               </Link>
             );
           })}

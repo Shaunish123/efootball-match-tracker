@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { subscribeToUsers, subscribeToTournaments, createTournament } from '@/lib/db';
 import { User, Tournament, MatchType } from '@/lib/types';
+import { getAdminToken, setAdminToken, hasAdminSession } from '@/lib/adminAuth';
 import Link from 'next/link';
 
 export default function TournamentsPage() {
@@ -19,6 +20,7 @@ export default function TournamentsPage() {
     { player1Id: '', player2Id: '' },
     { player1Id: '', player2Id: '' },
   ]);
+  const [adminPin, setAdminPin] = useState('');
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
 
@@ -84,6 +86,35 @@ export default function TournamentsPage() {
       return;
     }
 
+    // Verify Admin Authorization
+    const token = getAdminToken();
+    let isAuthorized = false;
+
+    if (adminPin.trim()) {
+      try {
+        const res = await fetch('/api/admin/verify-pin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin: adminPin.trim() }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          isAuthorized = true;
+          if (data.token) setAdminToken(data.token);
+        }
+      } catch {
+        setCreateError('Network error verifying Admin PIN');
+        return;
+      }
+    } else if (token) {
+      isAuthorized = true;
+    }
+
+    if (!isAuthorized) {
+      setCreateError('Admin PIN is required to lock in the roster and create a tournament. Please enter the valid 4-digit PIN.');
+      return;
+    }
+
     setCreating(true);
     try {
       const userNames: Record<string, string> = {};
@@ -95,6 +126,7 @@ export default function TournamentsPage() {
       await createTournament(tournamentName.trim(), format, pairings, userNames, matchType);
       setTournamentName('');
       setMatchType('dream');
+      setAdminPin('');
       setPairings(Array.from({ length: format / 2 }, () => ({ player1Id: '', player2Id: '' })));
       setShowCreate(false);
     } catch (err: any) {
@@ -290,6 +322,29 @@ export default function TournamentsPage() {
                   ))}
                 </div>
               )}
+            </div>
+
+            {/* Admin PIN Gate & Roster Lock */}
+            <div className="p-4 rounded-xl bg-bg-secondary border border-volt/30 max-w-2xl space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-volt text-sm">🔒</span>
+                <label className="text-xs font-heading font-bold uppercase tracking-widest text-text-primary">
+                  Admin PIN Authorization (Required to Lock Roster)
+                </label>
+              </div>
+              <p className="text-[0.7rem] text-text-muted leading-relaxed">
+                Tournaments are official events exempt from match cooldowns. Entering the Master PIN authorizes this tournament and permanently locks the participant roster.
+              </p>
+              <input
+                id="input-tournament-admin-pin"
+                type="password"
+                maxLength={8}
+                inputMode="numeric"
+                value={adminPin}
+                onChange={(e) => { setAdminPin(e.target.value); setCreateError(''); }}
+                className="input-dark font-mono text-center tracking-[0.4em] text-lg font-bold"
+                placeholder="Enter 4-digit PIN..."
+              />
             </div>
 
             {createError && (

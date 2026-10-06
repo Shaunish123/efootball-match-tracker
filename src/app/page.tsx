@@ -24,10 +24,11 @@ export default function DashboardPage() {
     };
   }, []);
 
-  const totalMatches = matches.length;
+  const approvedMatches = matches.filter((m) => (m.status || 'approved') === 'approved');
+  const totalMatches = approvedMatches.length;
   const totalUsers = users.length;
-  const totalPenalties = matches.filter((m) => m.isPenalty).length;
-  const totalDraws = matches.filter((m) => m.isDraw).length;
+  const totalPenalties = approvedMatches.filter((m) => m.isPenalty).length;
+  const totalDraws = approvedMatches.filter((m) => m.isDraw).length;
 
   // Sorting function for leaderboard entries
   const sortLeaderboard = (
@@ -351,6 +352,19 @@ export default function DashboardPage() {
                     <div className="flex items-center justify-between text-[0.65rem] text-text-muted">
                       <span>{new Date(match.createdAt).toLocaleDateString()}</span>
                       <div className="flex gap-1 items-center">
+                        {match.status === 'pending' ? (
+                          <span className="px-1.5 py-0.5 rounded uppercase font-bold text-[0.6rem] bg-amber-500/15 text-amber-400 border border-amber-500/30 animate-pulse">
+                            PENDING
+                          </span>
+                        ) : match.status === 'rejected' ? (
+                          <span className="px-1.5 py-0.5 rounded uppercase font-bold text-[0.6rem] bg-red/15 text-red border border-red/30">
+                            REJECTED
+                          </span>
+                        ) : (
+                          <span className="px-1.5 py-0.5 rounded uppercase font-bold text-[0.6rem] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                            APPROVED
+                          </span>
+                        )}
                         <span className={`px-1.5 py-0.5 rounded uppercase font-bold tracking-wider text-[0.6rem] ${match.matchType === 'auth' ? 'bg-purple-500/15 text-purple-400' : 'bg-cyan/15 text-cyan'}`}>
                           {match.matchType === 'auth' ? 'AUTH' : 'DREAM'}
                         </span>
