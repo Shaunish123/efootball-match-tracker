@@ -1138,7 +1138,7 @@ export default function AdminPage() {
                     15-Match Pairing Quota Progress
                   </h3>
                   <p className="text-xs text-text-muted">
-                    Every unique matchup has 15 regular-season match slots. When regular matches are approved, slots complete automatically.
+                    Every unique matchup has 15 casual match slots. Extra tournament matches can also be played and are tracked separately.
                   </p>
                 </div>
               </div>

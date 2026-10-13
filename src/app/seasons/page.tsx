@@ -95,8 +95,8 @@ export default function SeasonsPage() {
       });
     }
 
-    // Fixture progress for active / structured seasons
-    if (!selectedSeason.isUnstructured && selectedSeason.playerIds) {
+    // Fixture progress for seasons
+    if (selectedSeason.playerIds) {
       getFixtureStats(selectedSeason.id, selectedSeason.playerIds).then((stats) => {
         setFixtureStats(stats.byPair);
       });
@@ -212,11 +212,15 @@ export default function SeasonsPage() {
                       COMPLETED
                     </span>
                   )}
-                  {selectedSeason.isUnstructured && (
-                    <span className="px-2 py-0.5 rounded text-[0.65rem] font-heading font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                      Unstructured Inaugural Season
+                  {selectedSeason.seasonNumber === 1 ? (
+                    <span className="px-2 py-0.5 rounded text-[0.65rem] font-heading font-bold bg-cyan/15 text-cyan border border-cyan/30">
+                      Inaugural Season (All Matches Preserved)
                     </span>
-                  )}
+                  ) : selectedSeason.isUnstructured ? (
+                    <span className="px-2 py-0.5 rounded text-[0.65rem] font-heading font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                      Unstructured Season
+                    </span>
+                  ) : null}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-4 text-xs text-text-muted mt-2 font-mono">
@@ -236,11 +240,11 @@ export default function SeasonsPage() {
                 </div>
               </div>
 
-              {/* Progress Summary if structured */}
-              {!selectedSeason.isUnstructured && (
+              {/* Progress Summary */}
+              {selectedSeason.totalFixtures > 0 && (
                 <div className="bg-bg-dark/60 rounded-xl p-3 border border-border min-w-[220px]">
                   <div className="flex justify-between text-xs font-heading uppercase text-text-muted mb-1">
-                    <span>Season Fixtures</span>
+                    <span>{selectedSeason.seasonNumber === 1 ? 'Season 1 Matches' : 'Casual Fixtures'}</span>
                     <span className="text-volt font-mono font-bold">
                       {selectedSeason.completedFixtures || 0} / {selectedSeason.totalFixtures || 0}
                     </span>
@@ -264,7 +268,7 @@ export default function SeasonsPage() {
                         : 0}
                       % complete
                     </span>
-                    <span>15 matches / pair</span>
+                    <span>{selectedSeason.seasonNumber === 1 ? 'All games recorded' : '15 casual matches / pair'}</span>
                   </div>
                 </div>
               )}
@@ -390,16 +394,20 @@ export default function SeasonsPage() {
             </div>
           </div>
 
-          {/* Fixture Tracker if structured */}
-          {!selectedSeason.isUnstructured && fixtureStats.length > 0 && (
+          {/* Fixture Tracker */}
+          {fixtureStats.length > 0 && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="font-heading font-bold uppercase tracking-wide text-sm text-text-primary">
-                    15-Match Pairing Quotas ({fixtureStats.length} Unique Matchups)
+                    {selectedSeason.seasonNumber === 1
+                      ? `All Season 1 Matchups (${fixtureStats.length} Unique Matchups)`
+                      : `Casual Matchup Quotas (${fixtureStats.length} Unique Matchups)`}
                   </h3>
                   <p className="text-xs text-text-muted">
-                    Every pair has exactly 15 regular-season match slots to complete.
+                    {selectedSeason.seasonNumber === 1
+                      ? 'All matches played in Season 1 across every matchup. (The 15-casual-match quota applies from Season 2 onwards; tournaments are extra).'
+                      : 'Every pair has exactly 15 casual match slots. Tournament matches can also be played and are extra.'}
                   </p>
                 </div>
               </div>

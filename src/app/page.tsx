@@ -69,7 +69,7 @@ export default function DashboardPage() {
   }, [matches.length, users.length]);
 
   useEffect(() => {
-    if (activeTab === 'fixtures' && activeSeason && !activeSeason.isUnstructured) {
+    if (activeTab === 'fixtures' && activeSeason) {
       setFixturesLoading(true);
       getFixtureStats(activeSeason.id, activeSeason.playerIds)
         .then(setFixtureStats)
@@ -336,14 +336,14 @@ export default function DashboardPage() {
           </div>
           {!activeSeason.isUnstructured && totalRequired > 0 && (
             <div className="text-right">
-              <p className="text-text-muted text-xs font-heading uppercase tracking-wider">Fixture Progress</p>
+              <p className="text-text-muted text-xs font-heading uppercase tracking-wider">Casual Fixtures (15 / pair)</p>
               <p className="font-heading font-black text-2xl text-text-primary mt-0.5">
                 {completed}<span className="text-text-muted text-base"> / {totalRequired}</span>
               </p>
               <div className="mt-1.5 w-40 h-1.5 rounded-full bg-bg-elevated overflow-hidden">
                 <div className="h-full rounded-full bg-volt transition-all" style={{ width: `${progress}%` }} />
               </div>
-              <p className="text-text-muted text-[0.65rem] mt-0.5">{remaining} remaining</p>
+              <p className="text-text-muted text-[0.65rem] mt-0.5">{remaining} remaining · Tournaments extra</p>
             </div>
           )}
         </div>
@@ -638,7 +638,7 @@ export default function DashboardPage() {
       <div className="space-y-6 animate-fade-in">
         <div className="grid grid-cols-3 gap-4">
           {[
-            { label: 'Total Fixtures', value: total, color: 'text-text-primary' },
+            { label: 'Casual Fixtures', value: total, color: 'text-text-primary' },
             { label: 'Completed', value: completed, color: 'text-volt' },
             { label: 'Remaining', value: pending, color: 'text-cyan' },
           ].map((stat) => (
@@ -691,7 +691,8 @@ export default function DashboardPage() {
 
         <div className="card-glow p-0 overflow-hidden">
           <div className="p-5 border-b border-border">
-            <h3 className="font-heading font-bold text-base uppercase tracking-wide accent-bar">Matchup Progress (15 per pair)</h3>
+            <h3 className="font-heading font-bold text-base uppercase tracking-wide accent-bar">Matchup Progress (15 Casual Matches / Pair)</h3>
+            <p className="text-xs text-text-muted mt-1">Each pair has 15 casual match slots. Tournament cup matches are separate and extra.</p>
           </div>
           <div className="overflow-x-auto">
             <table className="table-gaming">
@@ -714,7 +715,7 @@ export default function DashboardPage() {
                       </span>
                     </td>
                     <td className="text-center">
-                      <span className={`font-heading font-bold ${pair.completed === 15 ? 'text-emerald-400' : 'text-volt'}`}>{pair.completed}</span>
+                      <span className={`font-heading font-bold ${pair.completed === pair.total ? 'text-emerald-400' : 'text-volt'}`}>{pair.completed}</span>
                     </td>
                     <td className="text-center">
                       <span className={`font-heading font-bold ${pair.pending === 0 ? 'text-emerald-400' : 'text-cyan'}`}>{pair.pending}</span>
@@ -722,11 +723,11 @@ export default function DashboardPage() {
                     <td>
                       <div className="flex items-center gap-2">
                         <div className="flex gap-0.5">
-                          {Array.from({ length: 15 }).map((_, i) => (
+                          {Array.from({ length: pair.total || 15 }).map((_, i) => (
                             <div key={i} className={`w-2 h-3 rounded-sm ${i < pair.completed ? 'bg-volt' : 'bg-bg-elevated'}`} />
                           ))}
                         </div>
-                        {pair.completed === 15 && <span className="text-emerald-400 text-xs font-heading font-bold uppercase">Done!</span>}
+                        {pair.completed === pair.total && <span className="text-emerald-400 text-xs font-heading font-bold uppercase">Done!</span>}
                       </div>
                     </td>
                   </tr>

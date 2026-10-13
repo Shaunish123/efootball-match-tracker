@@ -359,7 +359,7 @@ export default function MatchesPage() {
                   <div className="flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-volt animate-pulse" />
                     <span className="text-text-muted font-heading uppercase tracking-wider text-[0.7rem]">
-                      {activeSeason.name} Matchup:
+                      {activeSeason.name} Casual Matchup:
                     </span>
                     <span className="font-heading font-bold text-text-primary ml-1">
                       {pairFixture.completed} / {pairFixture.total} played
@@ -374,7 +374,7 @@ export default function MatchesPage() {
                         : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
                     }`}
                   >
-                    {pairFixture.remaining === 0 ? '0 Remaining' : `${pairFixture.remaining} Remaining`}
+                    {pairFixture.remaining === 0 ? '0 Casual Remaining' : `${pairFixture.remaining} Casual Remaining`}
                   </span>
                 </div>
 
@@ -390,10 +390,10 @@ export default function MatchesPage() {
                     </div>
                     <div>
                       <h4 className="font-heading font-black text-sm uppercase tracking-wide">
-                        No Fixtures Remaining ({pairFixture.completed} of {pairFixture.total} Completed)
+                        15/15 Casual Matches Completed
                       </h4>
                       <p className="text-xs text-text-secondary mt-1 leading-relaxed">
-                        {p1Name} and {p2Name} have already played all regular season matches against each other in {activeSeason.name}. No more matches can be entered or logged for this matchup.
+                        {p1Name} and {p2Name} have played all 15 casual regular-season matches against each other in {activeSeason.name}. No more casual matches can be logged for this matchup. (You can still play and log cup matches in the Tournaments section!)
                       </p>
                     </div>
                   </div>
@@ -407,10 +407,10 @@ export default function MatchesPage() {
                     </div>
                     <div>
                       <h4 className="font-heading font-black text-sm uppercase tracking-wide text-amber-400">
-                        Final Match Notice: 1 Game Remaining
+                        Final Casual Match Notice: 1 Game Remaining
                       </h4>
                       <p className="text-xs text-amber-200/90 mt-1 leading-relaxed font-semibold">
-                        Please note: You both have only 1 game remaining in this regular season matchup! This is your 15th and final game against each other.
+                        Please note: You both have only 1 casual match remaining in this matchup! This is your 15th and final casual game against each other. (Tournament matches remain available separately!)
                       </p>
                     </div>
                   </div>
@@ -422,10 +422,10 @@ export default function MatchesPage() {
                     <span className="text-sm font-black mt-0.5">ℹ️</span>
                     <div>
                       <h4 className="font-heading font-bold text-xs uppercase tracking-wide text-cyan">
-                        Logging Match 14 of 15
+                        Logging Casual Match 14 of 15
                       </h4>
                       <p className="text-xs text-cyan-200/90 mt-0.5 font-medium">
-                        Please note: After this 14th match is logged, you both will have only 1 game remaining in this regular season matchup!
+                        Please note: After this 14th casual match is logged, you both will have only 1 casual game remaining in this regular season matchup!
                       </p>
                     </div>
                   </div>
@@ -598,7 +598,7 @@ export default function MatchesPage() {
                 {submitting ? (
                   'Submitting Result...'
                 ) : pairFixture?.isQuotaReached ? (
-                  '⛔ No Fixtures Remaining (15/15 Played)'
+                  '⛔ Casual Quota Reached (15/15 Casual Matches Played)'
                 ) : isRateLimited && !isAdmin ? (
                   <span className="flex items-center justify-center gap-2">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="animate-spin text-amber-400">

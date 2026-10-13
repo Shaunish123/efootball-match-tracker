@@ -272,22 +272,46 @@ export async function migrateSeason1(): Promise<string> {
     winnerId: winner?.userId || null,
     winnerName: winner?.displayName || null,
     playerIds: userIds,
-    totalFixtures: 0,
+    totalFixtures: matchCount,
     completedFixtures: matchCount,
-    isUnstructured: true,
+    isUnstructured: false,
     endedManually: true,
     snapshot: s1Stats,
   };
 
   await set(s1Ref, season1);
 
-  // Tag matches with season ID
-  const tagBatch: Record<string, any> = {};
-  for (const mk of Object.keys(matchBatch)) {
-    tagBatch[`matches/${mk}/seasonId`] = s1Id;
+  // Tag matches with season ID and generate completed fixtures for Season 1
+  const batchUpdates: Record<string, any> = {};
+  if (matchesSnap.exists()) {
+    const matchesData = matchesSnap.val();
+    for (const mk of Object.keys(matchBatch)) {
+      batchUpdates[`matches/${mk}/seasonId`] = s1Id;
+      const m = matchesData[mk];
+      if (m) {
+        const pairKey = getPairKey(m.player1Id, m.player2Id);
+        const [p1Id, p2Id] = pairKey.split('_');
+        const p1Name = usersData[p1Id]?.displayName || m.player1Name || p1Id;
+        const p2Name = usersData[p2Id]?.displayName || m.player2Name || p2Id;
+        const fixRef = push(ref(db, `fixtures/${s1Id}/${pairKey}`));
+        batchUpdates[`fixtures/${s1Id}/${pairKey}/${fixRef.key}`] = {
+          seasonId: s1Id,
+          pairKey,
+          player1Id: p1Id,
+          player2Id: p2Id,
+          player1Name: p1Name,
+          player2Name: p2Name,
+          status: 'completed',
+          matchId: mk,
+          createdAt: m.createdAt || now,
+          completedAt: m.approvedAt ? new Date(m.approvedAt).getTime() : (m.createdAt || now),
+        };
+      }
+    }
   }
-  if (Object.keys(tagBatch).length > 0) {
-    await update(ref(db), tagBatch);
+
+  if (Object.keys(batchUpdates).length > 0) {
+    await update(ref(db), batchUpdates);
   }
 
   return s1Id;
