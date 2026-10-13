@@ -11,6 +11,7 @@ import {
   DataSnapshot,
 } from 'firebase/database';
 import { User, Match, MatchStatus, Tournament, TournamentMatch, TournamentBracket, H2HRecord, MatchType, ModeStats } from './types';
+import { getActiveSeason, completeOneFixture, revertFixtureForMatch } from './seasonDb';
 
 // Helper for default mode stats
 function createEmptyModeStats(): ModeStats {
@@ -486,6 +487,17 @@ export async function logMatch(matchData: {
     createdAt: now,
   };
 
+  if (!isTournament) {
+    try {
+      const activeSeason = await getActiveSeason();
+      if (activeSeason) {
+        match.seasonId = activeSeason.id;
+      }
+    } catch (e) {
+      console.warn('Could not determine active season during match logging:', e);
+    }
+  }
+
   if (winnerId) match.winnerId = winnerId;
   if (loserId) match.loserId = loserId;
   if (winnerName) match.winnerName = winnerName;
@@ -513,13 +525,23 @@ export async function logMatch(matchData: {
       await updateUserStats(player2Id, matchType, isP1Winner ? 'loss' : 'win', player2Score, player1Score);
       await updateH2H(player1Id, player1Name, player2Id, player2Name, isP1Winner ? 'p1_win' : 'p2_win', matchType);
     }
+
+    // Complete regular-season fixture slot if approved immediately
+    if (!isTournament && match.seasonId) {
+      try {
+        await completeOneFixture(match.seasonId, player1Id, player2Id, newRef.key!);
+      } catch (e) {
+        console.warn('Could not complete fixture slot during immediate match approval:', e);
+      }
+    }
   }
 
   return newRef.key!;
 }
 
 /**
- * Approve a pending match: updates status to approved and recalculates stats.
+ * Approve a pending match: updates status to approved, recalculates stats,
+ * and — for regular-season matches — consumes one pending fixture.
  */
 export async function approveMatch(matchId: string): Promise<void> {
   const matchRef = ref(db, `matches/${matchId}`);
@@ -529,13 +551,44 @@ export async function approveMatch(matchId: string): Promise<void> {
   const match = snap.val();
   if (match.status === 'approved') return; // already approved
 
+  const now = new Date().toISOString();
+
+  // --- Season & fixture integration ---
+  const isTournament = !!(match.tournamentId || match.isTournament);
+  let seasonId: string | undefined;
+
+  if (!isTournament) {
+    // Associate this match with the active season if not already tagged
+    if (!match.seasonId) {
+      const activeSeason = await getActiveSeason();
+      if (activeSeason) {
+        seasonId = activeSeason.id;
+        // Check both players are in the season
+        const p1InSeason = activeSeason.playerIds.includes(match.player1Id);
+        const p2InSeason = activeSeason.playerIds.includes(match.player2Id);
+        if (p1InSeason && p2InSeason) {
+          await update(matchRef, { seasonId });
+        } else {
+          seasonId = undefined;
+        }
+      }
+    } else {
+      seasonId = match.seasonId;
+    }
+  }
+
   await update(matchRef, {
     status: 'approved',
-    approvedAt: new Date().toISOString(),
+    approvedAt: now,
   });
 
   // Re-calculate user stats and leaderboards across all approved matches
   await recalculateAllUserStats();
+
+  // Complete a fixture slot for regular-season matches
+  if (!isTournament && seasonId) {
+    await completeOneFixture(seasonId, match.player1Id, match.player2Id, matchId);
+  }
 }
 
 /**
@@ -563,6 +616,9 @@ export async function denyMatch(matchId: string, permanentlyDelete: boolean = fa
     status: 'rejected',
     rejectedAt: new Date().toISOString(),
   });
+
+  // If the match was associated with a season fixture, revert it back to pending and decrement completed fixtures
+  await revertFixtureForMatch(matchId, match.seasonId, match.player1Id, match.player2Id);
 
   // If it was previously approved, re-calculate stats to remove its impact
   if (wasApproved) {
@@ -929,7 +985,10 @@ export async function deleteMatch(matchId: string): Promise<void> {
     await reverseH2H(player1Id, player2Id, isP1Winner ? 'p1_win' : 'p2_win', matchType);
   }
 
-  // 6. Delete the match record
+  // 6. Revert any season fixture completed by this match
+  await revertFixtureForMatch(matchId, match.seasonId, match.player1Id, match.player2Id);
+
+  // 7. Delete the match record
   await remove(matchRef);
 }
 

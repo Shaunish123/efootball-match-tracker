@@ -39,6 +39,24 @@ export async function POST(req: NextRequest) {
     const candidateAuth = authHeader || adminToken || adminPin;
     const isAdmin = verifyAdminRequest(candidateAuth);
 
+    // Regular-season fixture quota enforcement
+    if (!tournamentId) {
+      const { getActiveSeason, getPairFixtureProgress } = await import('@/lib/seasonDb');
+      const activeSeason = await getActiveSeason();
+      if (activeSeason && !activeSeason.isUnstructured) {
+        const progress = await getPairFixtureProgress(activeSeason.id, player1Id, player2Id);
+        if (progress.total > 0 && progress.remaining === 0) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: `No fixtures remaining between ${player1Name || 'Player 1'} and ${player2Name || 'Player 2'} for ${activeSeason.name}. The ${progress.total}-game quota has been reached.`,
+            },
+            { status: 400 }
+          );
+        }
+      }
+    }
+
     // Determine status: Admin submissions or tournament matches are approved immediately; standard casual submissions are pending
     const status: MatchStatus = (isAdmin || tournamentId) ? 'approved' : 'pending';
 

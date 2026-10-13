@@ -14,7 +14,11 @@ export interface ModeStats {
 export interface User {
   id: string;
   displayName: string;
+  name?: string;
   efootballUsername: string; // Hidden in UI, used for delete confirmation
+  avatar?: string;
+  isHost?: boolean;
+  teamName?: string;
   matchesPlayed: number;
   wins: number;
   draws: number;
@@ -122,5 +126,59 @@ export interface TournamentStandings {
   second?: string;
   third?: string;
   fourth?: string;
+}
+
+// ==================== SEASON TYPES ====================
+
+export type SeasonStatus = 'active' | 'completed';
+
+export interface SeasonPlayerSnapshot {
+  userId: string;
+  displayName: string;
+  matchesPlayed: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  points: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalDifference: number;
+  stats: {
+    dream: ModeStats;
+    auth: ModeStats;
+  };
+}
+
+export interface Season {
+  id: string;
+  seasonNumber: number;
+  name: string; // e.g., "Season 1"
+  status: SeasonStatus;
+  startedAt: number;
+  endedAt?: number;
+  winnerId?: string;
+  winnerName?: string;
+  playerIds: string[]; // participating player IDs
+  totalFixtures: number; // 15 * C(N,2) — 0 for Season 1
+  completedFixtures: number;
+  endedManually?: boolean;
+  isUnstructured?: boolean; // Season 1 flag — no fixture system
+  snapshot?: Record<string, SeasonPlayerSnapshot>; // finalized leaderboard
+}
+
+export type FixtureStatus = 'pending' | 'completed';
+
+export interface SeasonFixture {
+  id: string;
+  seasonId: string;
+  pairKey: string; // sorted "${p1Id}_${p2Id}"
+  player1Id: string;
+  player2Id: string;
+  player1Name: string;
+  player2Name: string;
+  status: FixtureStatus;
+  matchId?: string; // linked match when completed
+  createdAt: number;
+  completedAt?: number;
 }
 

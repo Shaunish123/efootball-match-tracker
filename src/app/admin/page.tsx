@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { subscribeToMatches, subscribeToUsers, recalculateAllUserStats } from '@/lib/db';
-import { Match, User } from '@/lib/types';
+import { subscribeToSeasons, getFixtureStats } from '@/lib/seasonDb';
+import type { PairFixtureStats, PlayerFixtureStats } from '@/lib/seasonDb';
+import { Match, User, Season } from '@/lib/types';
 import { getAdminToken, setAdminToken, clearAdminToken, loginWithPin } from '@/lib/adminAuth';
 import Link from 'next/link';
 
@@ -15,12 +17,27 @@ export default function AdminPage() {
 
   const [matches, setMatches] = useState<Match[]>([]);
   const [users, setUsers] = useState<User[]>([]);
-  const [activeTab, setActiveTab] = useState<'pending' | 'approved' | 'rejected' | 'controls'>('pending');
+  const [activeTab, setActiveTab] = useState<'pending' | 'approved' | 'rejected' | 'seasons' | 'controls'>('pending');
 
   const [processingMatchId, setProcessingMatchId] = useState<string | null>(null);
   const [actionSuccessMessage, setActionSuccessMessage] = useState<string>('');
   const [actionErrorMessage, setActionErrorMessage] = useState<string>('');
   const [recalculating, setRecalculating] = useState<boolean>(false);
+
+  // Season management state
+  const [seasons, setSeasons] = useState<Season[]>([]);
+  const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
+  const [startingSeason, setStartingSeason] = useState<boolean>(false);
+  const [migratingSeason1, setMigratingSeason1] = useState<boolean>(false);
+  const [endingSeason, setEndingSeason] = useState<boolean>(false);
+  const [showEndModal, setShowEndModal] = useState<boolean>(false);
+  const [activeFixtureStats, setActiveFixtureStats] = useState<{
+    byPair: PairFixtureStats[];
+    byPlayer: PlayerFixtureStats[];
+    total: number;
+    completed: number;
+    pending: number;
+  } | null>(null);
 
   useEffect(() => {
     // Check client session
@@ -32,11 +49,31 @@ export default function AdminPage() {
 
     const unsubMatches = subscribeToMatches(setMatches);
     const unsubUsers = subscribeToUsers(setUsers);
+    const unsubSeasons = subscribeToSeasons(setSeasons);
     return () => {
       unsubMatches();
       unsubUsers();
+      unsubSeasons();
     };
   }, []);
+
+  useEffect(() => {
+    if (users.length > 0 && selectedPlayerIds.length === 0) {
+      setSelectedPlayerIds(users.map((u) => u.id));
+    }
+  }, [users, selectedPlayerIds.length]);
+
+  const activeSeason = seasons.find((s) => s.status === 'active') || null;
+  const completedSeasons = seasons.filter((s) => s.status === 'completed');
+  const season1Exists = seasons.some((s) => s.seasonNumber === 1);
+
+  useEffect(() => {
+    if (activeSeason && !activeSeason.isUnstructured && activeSeason.playerIds) {
+      getFixtureStats(activeSeason.id, activeSeason.playerIds).then(setActiveFixtureStats);
+    } else {
+      setActiveFixtureStats(null);
+    }
+  }, [activeSeason?.id, activeSeason?.completedFixtures]);
 
   const handlePinSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -139,6 +176,93 @@ export default function AdminPage() {
     } finally {
       setRecalculating(false);
     }
+  };
+
+  const handleMigrateSeason1 = async () => {
+    const token = getAdminToken();
+    setMigratingSeason1(true);
+    try {
+      const res = await fetch('/api/admin/seasons', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ action: 'migrate-season-1', token }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showNotification('✓ Season 1 migrated successfully as a completed historical record!');
+      } else {
+        showNotification(data.error || 'Failed to migrate Season 1', true);
+      }
+    } catch {
+      showNotification('Server connection error during migration', true);
+    } finally {
+      setMigratingSeason1(false);
+    }
+  };
+
+  const handleStartSeason = async () => {
+    if (selectedPlayerIds.length < 2) {
+      showNotification('Please select at least 2 players to start a season', true);
+      return;
+    }
+    const token = getAdminToken();
+    setStartingSeason(true);
+    try {
+      const res = await fetch('/api/admin/seasons', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ action: 'start', playerIds: selectedPlayerIds, token }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showNotification(`✓ ${data.message || 'New season started successfully with 15 fixtures per pair!'}`);
+      } else {
+        showNotification(data.error || 'Failed to start season', true);
+      }
+    } catch {
+      showNotification('Server connection error while starting season', true);
+    } finally {
+      setStartingSeason(false);
+    }
+  };
+
+  const handleEndSeason = async () => {
+    if (!activeSeason) return;
+    const token = getAdminToken();
+    setEndingSeason(true);
+    try {
+      const res = await fetch('/api/admin/seasons', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ action: 'end', seasonId: activeSeason.id, token }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setShowEndModal(false);
+        showNotification('✓ Season ended successfully! Final standings snapshot saved to Season History.');
+      } else {
+        showNotification(data.error || 'Failed to end season', true);
+      }
+    } catch {
+      showNotification('Server connection error while ending season', true);
+    } finally {
+      setEndingSeason(false);
+    }
+  };
+
+  const togglePlayerSelection = (userId: string) => {
+    setSelectedPlayerIds((prev) =>
+      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
+    );
   };
 
   const pendingMatches = matches.filter((m) => m.status === 'pending');
@@ -368,6 +492,26 @@ export default function AdminPage() {
         </button>
 
         <button
+          onClick={() => setActiveTab('seasons')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-heading font-bold text-xs uppercase tracking-wider transition-all ${
+            activeTab === 'seasons'
+              ? 'bg-volt/15 text-volt border border-volt/40'
+              : 'text-text-secondary hover:text-text-primary hover:bg-bg-card border border-transparent'
+          }`}
+        >
+          <span>Season Manager</span>
+          {activeSeason ? (
+            <span className="px-1.5 py-0.2 rounded text-[0.6rem] bg-emerald-500 text-bg-primary font-black">
+              S{activeSeason.seasonNumber} LIVE
+            </span>
+          ) : (
+            <span className="px-1.5 py-0.2 rounded text-[0.6rem] bg-border text-text-muted font-bold">
+              IDLE
+            </span>
+          )}
+        </button>
+
+        <button
           onClick={() => setActiveTab('controls')}
           className={`px-4 py-2.5 rounded-lg font-heading font-bold text-xs uppercase tracking-wider transition-all ${
             activeTab === 'controls'
@@ -547,6 +691,7 @@ export default function AdminPage() {
                   <th className="text-center">Status</th>
                   <th className="text-center">Type</th>
                   <th>Date Approved</th>
+                  <th className="text-center">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -586,6 +731,28 @@ export default function AdminPage() {
                     </td>
                     <td className="text-text-secondary text-xs">
                       {m.approvedAt ? new Date(m.approvedAt).toLocaleDateString() : new Date(m.createdAt).toLocaleDateString()}
+                    </td>
+                    <td className="text-center">
+                      <div className="flex items-center justify-center gap-2">
+                        <button
+                          onClick={() => handleDeny(m.id, 'reject')}
+                          disabled={processingMatchId === m.id}
+                          className="px-2 py-1 rounded bg-red/10 hover:bg-red/20 text-red text-[0.65rem] font-heading font-bold uppercase border border-red/30 transition-all"
+                          title="Reject match and restore season fixture"
+                        >
+                          Reject
+                        </button>
+                        <button
+                          onClick={() => handleDeny(m.id, 'delete')}
+                          disabled={processingMatchId === m.id}
+                          className="p-1 rounded text-text-muted hover:text-red transition-colors"
+                          title="Permanently delete match"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                          </svg>
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -729,6 +896,437 @@ export default function AdminPage() {
             <Link href="/tournaments" className="btn-volt w-full block text-center">
               Go to Tournaments Page
             </Link>
+          </div>
+        </div>
+      )}
+
+      {/* ================= TAB: SEASON MANAGEMENT ================= */}
+      {activeTab === 'seasons' && (
+        <div className="space-y-6">
+          {/* Active Season Overview Card */}
+          {activeSeason ? (
+            <div className="p-6 rounded-2xl bg-gradient-to-r from-emerald-500/10 via-bg-card to-bg-card border border-emerald-500/30 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center justify-center font-heading font-black text-lg">
+                    S{activeSeason.seasonNumber}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="font-heading font-black text-xl text-text-primary uppercase">
+                        {activeSeason.name}
+                      </h2>
+                      <span className="px-2 py-0.5 rounded-full text-[0.65rem] font-bold bg-emerald-500 text-bg-primary">
+                        ACTIVE
+                      </span>
+                    </div>
+                    <p className="text-xs text-text-muted font-mono mt-0.5">
+                      Started: {new Date(activeSeason.startedAt).toLocaleDateString()} • {activeSeason.playerIds?.length || 0} Contenders
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <Link
+                    href="/seasons"
+                    className="btn-secondary text-xs uppercase font-heading font-bold py-2 px-3"
+                  >
+                    View Public Standings →
+                  </Link>
+                  <button
+                    onClick={() => setShowEndModal(true)}
+                    className="px-4 py-2 rounded-xl bg-red/15 hover:bg-red/25 border border-red/40 text-red font-heading font-bold text-xs uppercase tracking-wider transition-all flex items-center gap-2"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <rect x="3" y="3" width="18" height="18" rx="2" />
+                    </svg>
+                    End Season Manually
+                  </button>
+                </div>
+              </div>
+
+              {/* Progress bar */}
+              <div className="space-y-2 pt-2 border-t border-border/50">
+                <div className="flex justify-between text-xs font-mono">
+                  <span className="text-text-muted">Season Fixture Completion</span>
+                  <span className="text-volt font-bold">
+                    {activeSeason.completedFixtures || 0} of {activeSeason.totalFixtures || 0} matches ({activeSeason.totalFixtures ? Math.round(((activeSeason.completedFixtures || 0) / activeSeason.totalFixtures) * 100) : 0}%)
+                  </span>
+                </div>
+                <div className="w-full bg-border rounded-full h-2.5 overflow-hidden">
+                  <div
+                    className="bg-volt h-2.5 rounded-full transition-all duration-500"
+                    style={{
+                      width: `${
+                        activeSeason.totalFixtures
+                          ? Math.min(100, Math.round(((activeSeason.completedFixtures || 0) / activeSeason.totalFixtures) * 100))
+                          : 0
+                      }%`,
+                    }}
+                  />
+                </div>
+                <div className="flex justify-between text-[0.7rem] text-text-muted font-mono">
+                  <span>
+                    Remaining fixtures:{' '}
+                    <span className="text-amber-400 font-bold">
+                      {activeFixtureStats
+                        ? activeFixtureStats.pending
+                        : ((activeSeason.totalFixtures || 0) - (activeSeason.completedFixtures || 0))}
+                    </span>
+                  </span>
+                  <span>15 matches between every pair</span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {/* No active season banner */}
+              <div className="p-6 rounded-2xl bg-bg-card border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-border/40 text-text-muted flex items-center justify-center font-heading font-black text-lg">
+                    OFF
+                  </div>
+                  <div>
+                    <h2 className="font-heading font-black text-lg text-text-primary uppercase">
+                      No Active Season
+                    </h2>
+                    <p className="text-xs text-text-muted mt-0.5">
+                      Select participating players below to launch the next competitive season with equal 15-match pairing quotas.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Season 1 Migration Prompt if Season 1 doesn't exist */}
+              {!season1Exists && (
+                <div className="p-6 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-3">
+                  <div className="flex items-center gap-3">
+                    <span className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold">
+                      S1
+                    </span>
+                    <div>
+                      <h3 className="font-heading font-bold text-sm text-text-primary uppercase tracking-wide">
+                        Inaugural Season 1 Migration Needed
+                      </h3>
+                      <p className="text-xs text-text-muted">
+                        Preserve all historical non-tournament matches as completed "Season 1" (unstructured season) before starting Season 2.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleMigrateSeason1}
+                    disabled={migratingSeason1}
+                    className="btn-amber text-xs uppercase font-heading font-bold py-2 px-4 flex items-center gap-2"
+                  >
+                    {migratingSeason1 ? (
+                      <>
+                        <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                        Migrating Season 1...
+                      </>
+                    ) : (
+                      'Migrate & Archive Season 1'
+                    )}
+                  </button>
+                </div>
+              )}
+
+              {/* Start New Season Form */}
+              <div className="p-6 rounded-2xl bg-bg-card border border-border space-y-6">
+                <div>
+                  <h3 className="font-heading font-black text-lg uppercase tracking-wide text-text-primary">
+                    Launch New Structured Season
+                  </h3>
+                  <p className="text-xs text-text-secondary mt-1">
+                    Select players who will compete. The system generates an equal quota of 15 regular-season matches for every unique player matchup.
+                  </p>
+                </div>
+
+                {/* Player Selection */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-heading uppercase tracking-wider text-text-muted">
+                      Select Contenders ({selectedPlayerIds.length} of {users.length})
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedPlayerIds(users.map((u) => u.id))}
+                        className="text-xs text-volt hover:underline font-mono"
+                      >
+                        Select All
+                      </button>
+                      <span className="text-border">|</span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedPlayerIds([])}
+                        className="text-xs text-text-muted hover:underline font-mono"
+                      >
+                        Deselect All
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                    {users.map((user) => {
+                      const isSelected = selectedPlayerIds.includes(user.id);
+                      return (
+                        <label
+                          key={user.id}
+                          className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                            isSelected
+                              ? 'bg-volt/10 border-volt/40 text-text-primary'
+                              : 'bg-bg-dark/50 border-border text-text-muted hover:border-border/80'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => togglePlayerSelection(user.id)}
+                            className="w-4 h-4 rounded text-volt bg-bg-dark border-border focus:ring-volt"
+                          />
+                          <div className="min-w-0">
+                            <div className="text-xs font-heading font-bold truncate">
+                              {user.displayName || user.name}
+                            </div>
+                            <div className="text-[0.65rem] text-text-muted truncate">
+                              {user.teamName || 'Custom Team'}
+                            </div>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Fixture calculation preview */}
+                <div className="p-4 rounded-xl bg-bg-dark/60 border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-mono">
+                  <div>
+                    <span className="text-text-muted">Fixture Formula: </span>
+                    <span className="text-text-primary font-bold">
+                      15 matches × {selectedPlayerIds.length >= 2 ? (selectedPlayerIds.length * (selectedPlayerIds.length - 1)) / 2 : 0} pairs
+                    </span>
+                  </div>
+                  <div className="text-volt font-bold text-sm">
+                    Total Fixtures: {selectedPlayerIds.length >= 2 ? (15 * selectedPlayerIds.length * (selectedPlayerIds.length - 1)) / 2 : 0}
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleStartSeason}
+                  disabled={startingSeason || selectedPlayerIds.length < 2}
+                  className="btn-volt w-full flex items-center justify-center gap-2 py-3"
+                >
+                  {startingSeason ? (
+                    <>
+                      <span className="w-4 h-4 border-2 border-bg-primary/30 border-t-bg-primary rounded-full animate-spin" />
+                      Generating Fixtures & Launching Season...
+                    </>
+                  ) : (
+                    `Launch Season (${selectedPlayerIds.length >= 2 ? (15 * selectedPlayerIds.length * (selectedPlayerIds.length - 1)) / 2 : 0} Fixtures)`
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Active Fixture Breakdown */}
+          {activeSeason && activeFixtureStats && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-heading font-black text-base text-text-primary uppercase tracking-wide">
+                    15-Match Pairing Quota Progress
+                  </h3>
+                  <p className="text-xs text-text-muted">
+                    Every unique matchup has 15 regular-season match slots. When regular matches are approved, slots complete automatically.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {activeFixtureStats.byPair.map((pair) => {
+                  const pct = Math.round((pair.completed / pair.total) * 100);
+                  const isDone = pair.pending === 0;
+                  return (
+                    <div
+                      key={pair.pairKey}
+                      className={`card p-4 transition-all ${
+                        isDone ? 'border-emerald-500/40 bg-emerald-500/5' : 'hover:border-volt/40'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-heading font-bold text-xs text-text-primary truncate max-w-[170px]">
+                          {pair.player1Name} vs {pair.player2Name}
+                        </span>
+                        <span
+                          className={`text-[0.65rem] font-mono px-2 py-0.5 rounded font-bold ${
+                            isDone ? 'bg-emerald-500/20 text-emerald-400' : 'bg-volt/10 text-volt'
+                          }`}
+                        >
+                          {pair.completed} / {pair.total}
+                        </span>
+                      </div>
+                      <div className="w-full bg-border rounded-full h-1.5 overflow-hidden">
+                        <div
+                          className={`h-1.5 rounded-full ${isDone ? 'bg-emerald-400' : 'bg-volt'}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-[0.65rem] text-text-muted mt-2 font-mono">
+                        <span>{pair.pending} remaining</span>
+                        <span>{pct}% complete</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Per-Player Match Balance Table */}
+              <div className="card p-5 space-y-3">
+                <h4 className="font-heading font-bold text-sm text-text-primary uppercase">
+                  Player Match Balance Verification
+                </h4>
+                <div className="overflow-x-auto">
+                  <table className="table-modern">
+                    <thead>
+                      <tr>
+                        <th>Player</th>
+                        <th className="text-center">Total Assigned</th>
+                        <th className="text-center">Completed</th>
+                        <th className="text-center">Remaining</th>
+                        <th className="text-center font-bold text-volt">Progress</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeFixtureStats.byPlayer.map((p) => {
+                        const pct = p.totalFixtures > 0 ? Math.round((p.completedFixtures / p.totalFixtures) * 100) : 0;
+                        return (
+                          <tr key={p.userId}>
+                            <td className="font-heading font-bold text-xs text-text-primary">
+                              {p.displayName}
+                            </td>
+                            <td className="text-center font-mono text-xs">{p.totalFixtures}</td>
+                            <td className="text-center font-mono text-xs text-emerald-400 font-bold">{p.completedFixtures}</td>
+                            <td className="text-center font-mono text-xs text-amber-400">{p.remainingFixtures}</td>
+                            <td className="text-center font-mono text-xs font-bold text-volt">{pct}%</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Completed Seasons Archive */}
+          {completedSeasons.length > 0 && (
+            <div className="space-y-4">
+              <h3 className="font-heading font-black text-base text-text-primary uppercase tracking-wide">
+                Completed Seasons History
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {completedSeasons.map((s) => (
+                  <div key={s.id} className="card p-5 border-l-4 border-l-volt space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="font-heading font-bold text-base text-text-primary uppercase">
+                          {s.name}
+                        </span>
+                        <span className="px-2 py-0.5 rounded text-[0.6rem] font-bold bg-border text-text-muted">
+                          COMPLETED
+                        </span>
+                      </div>
+                      <Link
+                        href="/seasons"
+                        className="text-xs text-volt hover:underline font-mono"
+                      >
+                        Inspect Standings →
+                      </Link>
+                    </div>
+
+                    <div className="text-xs text-text-muted font-mono space-y-1">
+                      <div>Started: {new Date(s.startedAt).toLocaleDateString()}</div>
+                      {s.endedAt && <div>Ended: {new Date(s.endedAt).toLocaleDateString()}</div>}
+                      {s.winnerName && (
+                        <div className="text-volt font-bold">
+                          👑 Champion: {s.winnerName}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Confirmation Modal: End Season */}
+      {showEndModal && activeSeason && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="card p-6 md:p-8 max-w-lg w-full border border-red/40 bg-bg-card space-y-6 shadow-2xl shadow-red/10">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-xl bg-red/15 text-red border border-red/30 flex items-center justify-center shrink-0">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="font-heading font-black text-xl text-text-primary uppercase tracking-wide">
+                  End {activeSeason.name}?
+                </h3>
+                <p className="text-xs text-text-secondary mt-1">
+                  You are about to manually conclude this season.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl bg-bg-dark border border-border space-y-2 text-xs font-mono">
+              <div className="flex justify-between text-text-muted">
+                <span>Completed Fixtures:</span>
+                <span className="text-text-primary font-bold">
+                  {activeSeason.completedFixtures || 0} / {activeSeason.totalFixtures || 0}
+                </span>
+              </div>
+              <div className="flex justify-between text-text-muted">
+                <span>Remaining Fixtures:</span>
+                <span className="text-amber-400 font-bold">
+                  {activeFixtureStats
+                    ? activeFixtureStats.pending
+                    : ((activeSeason.totalFixtures || 0) - (activeSeason.completedFixtures || 0))}
+                </span>
+              </div>
+              <div className="pt-2 border-t border-border/60 text-text-muted leading-relaxed">
+                Ending the season now will freeze the current standings, save a permanent snapshot to Season History, and crown the current leader as Champion. Unplayed fixtures will be cancelled.
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setShowEndModal(false)}
+                disabled={endingSeason}
+                className="btn-secondary text-xs uppercase font-heading font-bold py-2 px-4"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleEndSeason}
+                disabled={endingSeason}
+                className="px-4 py-2 rounded-xl bg-red hover:bg-red/90 text-white font-heading font-bold text-xs uppercase tracking-wider flex items-center gap-2 shadow-lg shadow-red/20"
+              >
+                {endingSeason ? (
+                  <>
+                    <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Finalizing & Ending...
+                  </>
+                ) : (
+                  'Confirm & End Season'
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
