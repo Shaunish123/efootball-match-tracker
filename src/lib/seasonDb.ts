@@ -336,7 +336,6 @@ export async function startNewSeason(playerIds: string[]): Promise<string> {
   const n = playerIds.length;
   if (n < 2) throw new Error('Need at least 2 players to start a season.');
 
-  const totalFixtures = (15 * n * (n - 1)) / 2;
   const now = Date.now();
 
   const seasonRef = push(ref(db, 'seasons'));
@@ -348,42 +347,12 @@ export async function startNewSeason(playerIds: string[]): Promise<string> {
     status: 'active',
     startedAt: now,
     playerIds,
-    totalFixtures,
+    totalFixtures: 0,
     completedFixtures: 0,
-    isUnstructured: false,
+    isUnstructured: true,
   };
 
   await set(seasonRef, season);
-
-  // Generate 15 fixtures per unique pair
-  const fixturesBatch: Record<string, any> = {};
-  for (let i = 0; i < playerIds.length; i++) {
-    for (let j = i + 1; j < playerIds.length; j++) {
-      const p1Id = playerIds[i];
-      const p2Id = playerIds[j];
-      const pairKey = getPairKey(p1Id, p2Id);
-      const [canonP1Id, canonP2Id] = pairKey.split('_');
-      const p1Name = userNames[canonP1Id] || canonP1Id;
-      const p2Name = userNames[canonP2Id] || canonP2Id;
-
-      for (let k = 0; k < 15; k++) {
-        const fixRef = push(ref(db, `fixtures/${seasonId}/${pairKey}`));
-        const fixId = fixRef.key!;
-        fixturesBatch[`fixtures/${seasonId}/${pairKey}/${fixId}`] = {
-          seasonId,
-          pairKey,
-          player1Id: canonP1Id,
-          player2Id: canonP2Id,
-          player1Name: p1Name,
-          player2Name: p2Name,
-          status: 'pending',
-          createdAt: now,
-        };
-      }
-    }
-  }
-
-  await update(ref(db), fixturesBatch);
   return seasonId;
 }
 
@@ -489,14 +458,14 @@ export async function endSeason(seasonId: string): Promise<void> {
 
   const winner = sorted[0];
 
-  // Count completed fixtures
-  const fixturesSnap = await get(ref(db, `fixtures/${seasonId}`));
-  let completedFixtures = 0;
-  if (fixturesSnap.exists()) {
-    const fd = fixturesSnap.val();
-    for (const pairKey of Object.keys(fd)) {
-      for (const fid of Object.keys(fd[pairKey])) {
-        if (fd[pairKey][fid].status === 'completed') completedFixtures++;
+  // Count total approved matches in this season
+  let seasonMatchCount = 0;
+  if (matchesSnap.exists()) {
+    const matchesData = matchesSnap.val();
+    for (const mk of Object.keys(matchesData)) {
+      const m = matchesData[mk];
+      if (m.seasonId === seasonId && (m.status || 'approved') === 'approved') {
+        seasonMatchCount++;
       }
     }
   }
@@ -507,96 +476,45 @@ export async function endSeason(seasonId: string): Promise<void> {
     endedManually: true,
     winnerId: winner?.userId || null,
     winnerName: winner?.displayName || null,
-    completedFixtures,
+    totalFixtures: seasonMatchCount,
+    completedFixtures: seasonMatchCount,
+    isUnstructured: true,
     snapshot,
   });
 }
 
-// ==================== FIXTURE COMPLETION ====================
+// ==================== FIXTURE HELPERS (COMPATIBILITY) ====================
 
 /**
- * Atomically marks one pending fixture as completed.
- * Returns true if a fixture was consumed; false if all 15 are already done.
+ * No-op in fluid seasons (matches are unlimited).
  */
 export async function completeOneFixture(
-  seasonId: string,
-  player1Id: string,
-  player2Id: string,
-  matchId: string
+  _seasonId: string,
+  _player1Id: string,
+  _player2Id: string,
+  _matchId: string
 ): Promise<boolean> {
-  const pairKey = getPairKey(player1Id, player2Id);
-  const pairRef = ref(db, `fixtures/${seasonId}/${pairKey}`);
-  const snap = await get(pairRef);
-  if (!snap.exists()) return false;
-
-  const pairData = snap.val();
-  const pendingId = Object.keys(pairData).find(
-    (fid) => pairData[fid].status === 'pending'
-  );
-  if (!pendingId) return false;
-
-  const now = Date.now();
-  const fixtureRef = ref(db, `fixtures/${seasonId}/${pairKey}/${pendingId}`);
-
-  let consumed = false;
-  await runTransaction(fixtureRef, (currentData) => {
-    if (!currentData || currentData.status !== 'pending') {
-      return; // abort
-    }
-    consumed = true;
-    return {
-      ...currentData,
-      status: 'completed',
-      matchId,
-      completedAt: now,
-    };
-  });
-
-  if (consumed) {
-    // Increment season's completedFixtures counter
-    const cfSnap = await get(ref(db, `seasons/${seasonId}/completedFixtures`));
-    const currentCount = cfSnap.val() || 0;
-    await update(ref(db, `seasons/${seasonId}`), {
-      completedFixtures: currentCount + 1,
-    });
-  }
-
-  return consumed;
+  return false;
 }
 
 /**
- * Gets fixture progress for a specific pair of players in a season.
+ * In fluid seasons, quotas are never reached and matches are unlimited.
  */
 export async function getPairFixtureProgress(
-  seasonId: string,
-  player1Id: string,
-  player2Id: string
+  _seasonId: string,
+  _player1Id: string,
+  _player2Id: string
 ): Promise<{
   total: number;
   completed: number;
   remaining: number;
   isQuotaReached: boolean;
 }> {
-  const pairKey = getPairKey(player1Id, player2Id);
-  const snap = await get(ref(db, `fixtures/${seasonId}/${pairKey}`));
-  if (!snap.exists()) {
-    return { total: 0, completed: 0, remaining: 0, isQuotaReached: false };
-  }
-  const data = snap.val();
-  let total = 0;
-  let completed = 0;
-  for (const fid of Object.keys(data)) {
-    total++;
-    if (data[fid].status === 'completed') {
-      completed++;
-    }
-  }
-  const remaining = Math.max(0, total - completed);
   return {
-    total,
-    completed,
-    remaining,
-    isQuotaReached: total > 0 && remaining === 0,
+    total: 0,
+    completed: 0,
+    remaining: 999,
+    isQuotaReached: false,
   };
 }
 
@@ -628,59 +546,11 @@ export async function recalculateSeasonCompletedFixtures(seasonId: string): Prom
  * restoring the fixture back to 'pending' and recalculating the season's completed fixtures.
  */
 export async function revertFixtureForMatch(
-  matchId: string,
-  seasonId?: string,
-  player1Id?: string,
-  player2Id?: string
+  _matchId: string,
+  _seasonId?: string,
+  _player1Id?: string,
+  _player2Id?: string
 ): Promise<boolean> {
-  const targetSeasonId = seasonId;
-
-  // 1. Try targeted lookup if seasonId and players are known
-  if (targetSeasonId && player1Id && player2Id) {
-    const pairKey = getPairKey(player1Id, player2Id);
-    const snap = await get(ref(db, `fixtures/${targetSeasonId}/${pairKey}`));
-    if (snap.exists()) {
-      const data = snap.val();
-      for (const fid of Object.keys(data)) {
-        if (data[fid].matchId === matchId && data[fid].status === 'completed') {
-          await update(ref(db, `fixtures/${targetSeasonId}/${pairKey}/${fid}`), {
-            status: 'pending',
-            matchId: null,
-            completedAt: null,
-          });
-          await recalculateSeasonCompletedFixtures(targetSeasonId);
-          return true;
-        }
-      }
-    }
-  }
-
-  // 2. Fallback: Search all seasons/fixtures for this matchId
-  const seasonsSnap = await get(ref(db, 'seasons'));
-  if (seasonsSnap.exists()) {
-    const sData = seasonsSnap.val();
-    for (const sid of Object.keys(sData)) {
-      const fixSnap = await get(ref(db, `fixtures/${sid}`));
-      if (fixSnap.exists()) {
-        const fData = fixSnap.val();
-        for (const pk of Object.keys(fData)) {
-          const pData = fData[pk];
-          for (const fid of Object.keys(pData)) {
-            if (pData[fid].matchId === matchId && pData[fid].status === 'completed') {
-              await update(ref(db, `fixtures/${sid}/${pk}/${fid}`), {
-                status: 'pending',
-                matchId: null,
-                completedAt: null,
-              });
-              await recalculateSeasonCompletedFixtures(sid);
-              return true;
-            }
-          }
-        }
-      }
-    }
-  }
-
   return false;
 }
 

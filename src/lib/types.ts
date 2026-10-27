@@ -76,6 +76,7 @@ export interface Match {
   isTournament?: boolean;
   tournamentId?: string;
   tournamentRound?: string;
+  seasonId?: string;
   status: MatchStatus;
   submittedAt?: string;
   approvedAt?: string | null;
@@ -92,6 +93,7 @@ export interface Tournament {
   rosterNames: Record<string, string>; // userId -> displayName
   bracket: TournamentBracket;
   standings?: TournamentStandings;
+  seasonId?: string;
   createdAt: number;
   completedAt?: number;
 }

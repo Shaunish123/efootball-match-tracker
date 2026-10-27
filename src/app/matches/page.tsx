@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { subscribeToUsers, subscribeToMatches, deleteMatch } from '@/lib/db';
-import { subscribeToSeasons, getPairFixtureProgress } from '@/lib/seasonDb';
+import { subscribeToSeasons } from '@/lib/seasonDb';
 import { User, Match, MatchType, Season } from '@/lib/types';
 import { useRateLimit } from '@/lib/useRateLimit';
 import { getAdminToken, loginWithPin, clearAdminToken, hasAdminSession } from '@/lib/adminAuth';
@@ -11,13 +11,6 @@ export default function MatchesPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
   const [activeSeason, setActiveSeason] = useState<Season | null>(null);
-  const [pairFixture, setPairFixture] = useState<{
-    total: number;
-    completed: number;
-    remaining: number;
-    isQuotaReached: boolean;
-  } | null>(null);
-  const [checkingFixture, setCheckingFixture] = useState(false);
 
   const [player1Id, setPlayer1Id] = useState('');
   const [player2Id, setPlayer2Id] = useState('');
@@ -62,31 +55,7 @@ export default function MatchesPage() {
     };
   }, []);
 
-  // Recalculate pair fixtures whenever players or matches change
-  useEffect(() => {
-    if (!player1Id || !player2Id || player1Id === player2Id || !activeSeason || activeSeason.isUnstructured) {
-      setPairFixture(null);
-      return;
-    }
-    let cancelled = false;
-    setCheckingFixture(true);
-    getPairFixtureProgress(activeSeason.id, player1Id, player2Id)
-      .then((progress) => {
-        if (!cancelled) {
-          setPairFixture(progress);
-        }
-      })
-      .catch((err) => {
-        console.warn('Error fetching pair fixture progress:', err);
-      })
-      .finally(() => {
-        if (!cancelled) setCheckingFixture(false);
-      });
 
-    return () => {
-      cancelled = true;
-    };
-  }, [player1Id, player2Id, activeSeason, matches]);
 
   // Check if scores are tied
   const scoresAreTied = score1 !== '' && score2 !== '' && parseInt(score1) === parseInt(score2);
@@ -170,10 +139,7 @@ export default function MatchesPage() {
     const p1 = users.find((u) => u.id === player1Id)!;
     const p2 = users.find((u) => u.id === player2Id)!;
 
-    if (pairFixture && pairFixture.isQuotaReached) {
-      setError(`No fixtures remaining between ${p1.displayName} and ${p2.displayName} in ${activeSeason?.name || 'this season'}. The ${pairFixture.total}-game quota has been reached.`);
-      return;
-    }
+
 
     setSubmitting(true);
     try {
@@ -351,87 +317,7 @@ export default function MatchesPage() {
               </div>
             </div>
 
-            {/* Live Season Fixture Status & Quota Alert Banners */}
-            {activeSeason && !activeSeason.isUnstructured && player1Id && player2Id && player1Id !== player2Id && pairFixture && (
-              <div className="space-y-3 animate-fade-in">
-                {/* Compact Fixture Progress Bar */}
-                <div className="p-3 rounded-xl bg-bg-card border border-border flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-volt animate-pulse" />
-                    <span className="text-text-muted font-heading uppercase tracking-wider text-[0.7rem]">
-                      {activeSeason.name} Casual Matchup:
-                    </span>
-                    <span className="font-heading font-bold text-text-primary ml-1">
-                      {pairFixture.completed} / {pairFixture.total} played
-                    </span>
-                  </div>
-                  <span
-                    className={`px-2.5 py-0.5 rounded text-[0.65rem] font-heading font-black uppercase tracking-wider ${
-                      pairFixture.remaining === 0
-                        ? 'bg-red/15 text-red border border-red/30'
-                        : pairFixture.remaining === 1
-                        ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 animate-pulse'
-                        : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                    }`}
-                  >
-                    {pairFixture.remaining === 0 ? '0 Casual Remaining' : `${pairFixture.remaining} Casual Remaining`}
-                  </span>
-                </div>
 
-                {/* 0 Fixtures Remaining Alert - Strictly stops entering/submitting match */}
-                {pairFixture.remaining === 0 && (
-                  <div className="p-4 rounded-xl bg-red/15 border-2 border-red/40 text-red animate-fade-in flex items-start gap-3 shadow-lg shadow-red/10">
-                    <div className="w-8 h-8 rounded-full bg-red/20 border border-red/40 flex items-center justify-center shrink-0 mt-0.5">
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                        <circle cx="12" cy="12" r="10" />
-                        <line x1="15" y1="9" x2="9" y2="15" />
-                        <line x1="9" y1="9" x2="15" y2="15" />
-                      </svg>
-                    </div>
-                    <div>
-                      <h4 className="font-heading font-black text-sm uppercase tracking-wide">
-                        15/15 Casual Matches Completed
-                      </h4>
-                      <p className="text-xs text-text-secondary mt-1 leading-relaxed">
-                        {p1Name} and {p2Name} have played all 15 casual regular-season matches against each other in {activeSeason.name}. No more casual matches can be logged for this matchup. (You can still play and log cup matches in the Tournaments section!)
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                {/* Exactly 1 Game Remaining Notice (14th match completed / final match about to be logged) */}
-                {pairFixture.remaining === 1 && (
-                  <div className="p-4 rounded-xl bg-amber-500/15 border-2 border-amber-500/40 text-amber-300 animate-fade-in flex items-start gap-3 shadow-lg shadow-amber-500/10">
-                    <div className="w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0 mt-0.5">
-                      <span className="text-sm font-black text-amber-400">⚡</span>
-                    </div>
-                    <div>
-                      <h4 className="font-heading font-black text-sm uppercase tracking-wide text-amber-400">
-                        Final Casual Match Notice: 1 Game Remaining
-                      </h4>
-                      <p className="text-xs text-amber-200/90 mt-1 leading-relaxed font-semibold">
-                        Please note: You both have only 1 casual match remaining in this matchup! This is your 15th and final casual game against each other. (Tournament matches remain available separately!)
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                {/* Logging Match 14 Notice (completed === 13, remaining === 2, currently logging the 14th match) */}
-                {pairFixture.completed === 13 && pairFixture.remaining === 2 && (
-                  <div className="p-3.5 rounded-xl bg-cyan/10 border border-cyan/30 text-cyan animate-fade-in flex items-start gap-2.5">
-                    <span className="text-sm font-black mt-0.5">ℹ️</span>
-                    <div>
-                      <h4 className="font-heading font-bold text-xs uppercase tracking-wide text-cyan">
-                        Logging Casual Match 14 of 15
-                      </h4>
-                      <p className="text-xs text-cyan-200/90 mt-0.5 font-medium">
-                        Please note: After this 14th casual match is logged, you both will have only 1 casual game remaining in this regular season matchup!
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
 
             {/* Score Input */}
             <div>
@@ -581,24 +467,20 @@ export default function MatchesPage() {
               </div>
             )}
 
-            {/* Submit Button with Live Countdown & Fixture Quota Blocker */}
+            {/* Submit Button with Live Countdown */}
             <div>
               <button
                 type="submit"
                 id="submit-match"
-                disabled={submitting || (isRateLimited && !isAdmin) || (pairFixture?.isQuotaReached ?? false)}
+                disabled={submitting || (isRateLimited && !isAdmin)}
                 className={`w-full py-3 px-6 rounded-lg font-heading font-black text-sm uppercase tracking-wider transition-all duration-200 ${
-                  pairFixture?.isQuotaReached
-                    ? 'bg-red/10 text-red border border-red/40 cursor-not-allowed opacity-80'
-                    : isRateLimited && !isAdmin
+                  isRateLimited && !isAdmin
                     ? 'bg-bg-elevated text-text-muted border border-border cursor-not-allowed opacity-80'
                     : 'btn-volt cursor-pointer'
                 }`}
               >
                 {submitting ? (
                   'Submitting Result...'
-                ) : pairFixture?.isQuotaReached ? (
-                  '⛔ Casual Quota Reached (15/15 Casual Matches Played)'
                 ) : isRateLimited && !isAdmin ? (
                   <span className="flex items-center justify-center gap-2">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="animate-spin text-amber-400">

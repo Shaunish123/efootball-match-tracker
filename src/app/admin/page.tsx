@@ -221,7 +221,7 @@ export default function AdminPage() {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        showNotification(`✓ ${data.message || 'New season started successfully with 15 fixtures per pair!'}`);
+        showNotification(`✓ ${data.message || 'New season started successfully!'}`);
       } else {
         showNotification(data.error || 'Failed to start season', true);
       }
@@ -945,38 +945,29 @@ export default function AdminPage() {
                 </div>
               </div>
 
-              {/* Progress bar */}
-              <div className="space-y-2 pt-2 border-t border-border/50">
-                <div className="flex justify-between text-xs font-mono">
-                  <span className="text-text-muted">Season Fixture Completion</span>
-                  <span className="text-volt font-bold">
-                    {activeSeason.completedFixtures || 0} of {activeSeason.totalFixtures || 0} matches ({activeSeason.totalFixtures ? Math.round(((activeSeason.completedFixtures || 0) / activeSeason.totalFixtures) * 100) : 0}%)
-                  </span>
-                </div>
-                <div className="w-full bg-border rounded-full h-2.5 overflow-hidden">
-                  <div
-                    className="bg-volt h-2.5 rounded-full transition-all duration-500"
-                    style={{
-                      width: `${
-                        activeSeason.totalFixtures
-                          ? Math.min(100, Math.round(((activeSeason.completedFixtures || 0) / activeSeason.totalFixtures) * 100))
-                          : 0
-                      }%`,
-                    }}
-                  />
-                </div>
-                <div className="flex justify-between text-[0.7rem] text-text-muted font-mono">
-                  <span>
-                    Remaining fixtures:{' '}
-                    <span className="text-amber-400 font-bold">
-                      {activeFixtureStats
-                        ? activeFixtureStats.pending
-                        : ((activeSeason.totalFixtures || 0) - (activeSeason.completedFixtures || 0))}
-                    </span>
-                  </span>
-                  <span>15 matches between every pair</span>
-                </div>
-              </div>
+              {/* Match Tracking */}
+              {(() => {
+                const sMatches = matches.filter(
+                  (m) => m.seasonId === activeSeason.id && (m.status || 'approved') === 'approved'
+                );
+                const casualCount = sMatches.filter((m) => !m.tournamentId).length;
+                const tournCount = sMatches.filter((m) => !!m.tournamentId).length;
+
+                return (
+                  <div className="space-y-2 pt-2 border-t border-border/50">
+                    <div className="flex justify-between text-xs font-mono">
+                      <span className="text-text-muted">Season Matches Recorded (Casual + Tournament)</span>
+                      <span className="text-volt font-bold">
+                        {sMatches.length} matches ({casualCount} casual, {tournCount} tournament)
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-[0.7rem] text-text-muted font-mono">
+                      <span className="text-emerald-400">● Fluid Season Active</span>
+                      <span>Play unlimited matches until season is ended</span>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           ) : (
             <div className="space-y-6">
@@ -1283,22 +1274,8 @@ export default function AdminPage() {
             </div>
 
             <div className="p-4 rounded-xl bg-bg-dark border border-border space-y-2 text-xs font-mono">
-              <div className="flex justify-between text-text-muted">
-                <span>Completed Fixtures:</span>
-                <span className="text-text-primary font-bold">
-                  {activeSeason.completedFixtures || 0} / {activeSeason.totalFixtures || 0}
-                </span>
-              </div>
-              <div className="flex justify-between text-text-muted">
-                <span>Remaining Fixtures:</span>
-                <span className="text-amber-400 font-bold">
-                  {activeFixtureStats
-                    ? activeFixtureStats.pending
-                    : ((activeSeason.totalFixtures || 0) - (activeSeason.completedFixtures || 0))}
-                </span>
-              </div>
-              <div className="pt-2 border-t border-border/60 text-text-muted leading-relaxed">
-                Ending the season now will freeze the current standings, save a permanent snapshot to Season History, and crown the current leader as Champion. Unplayed fixtures will be cancelled.
+              <div className="text-text-secondary leading-relaxed">
+                Ending the season now will freeze the current standings, save a permanent snapshot to Season History, and crown the current leader as Champion.
               </div>
             </div>
 

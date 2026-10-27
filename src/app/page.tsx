@@ -6,13 +6,11 @@ import {
   subscribeToSeasons,
   computeSeasonLeaderboard,
   computeAllTimeLeaderboard,
-  getFixtureStats,
 } from '@/lib/seasonDb';
-import type { PairFixtureStats, PlayerFixtureStats } from '@/lib/seasonDb';
 import { User, Match, Season, SeasonPlayerSnapshot } from '@/lib/types';
 import Link from 'next/link';
 
-type DashTab = 'season' | 'alltime' | 'history' | 'fixtures';
+type DashTab = 'season' | 'alltime' | 'history';
 
 export default function DashboardPage() {
   const [users, setUsers] = useState<User[]>([]);
@@ -28,14 +26,7 @@ export default function DashboardPage() {
   const [allTimeLeaderboard, setAllTimeLeaderboard] = useState<SeasonPlayerSnapshot[]>([]);
   const [seasonLbLoading, setSeasonLbLoading] = useState(false);
 
-  const [fixtureStats, setFixtureStats] = useState<{
-    byPair: PairFixtureStats[];
-    byPlayer: PlayerFixtureStats[];
-    total: number;
-    completed: number;
-    pending: number;
-  } | null>(null);
-  const [fixturesLoading, setFixturesLoading] = useState(false);
+
 
   const [selectedHistorySeason, setSelectedHistorySeason] = useState<Season | null>(null);
 
@@ -68,15 +59,7 @@ export default function DashboardPage() {
     computeAllTimeLeaderboard().then(setAllTimeLeaderboard);
   }, [matches.length, users.length]);
 
-  useEffect(() => {
-    if (activeTab === 'fixtures' && activeSeason) {
-      setFixturesLoading(true);
-      getFixtureStats(activeSeason.id, activeSeason.playerIds)
-        .then(setFixtureStats)
-        .finally(() => setFixturesLoading(false));
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, activeSeason?.id]);
+
 
   const approvedMatches = matches.filter((m) => (m.status || 'approved') === 'approved');
   const totalMatches = approvedMatches.length;
@@ -315,11 +298,11 @@ export default function DashboardPage() {
       );
     }
 
-    const n = activeSeason.playerIds.length;
-    const totalRequired = activeSeason.isUnstructured ? 0 : (15 * n * (n - 1)) / 2;
-    const completed = activeSeason.completedFixtures || 0;
-    const remaining = Math.max(0, totalRequired - completed);
-    const progress = totalRequired > 0 ? Math.round((completed / totalRequired) * 100) : 0;
+    const activeSeasonMatches = matches.filter(
+      (m) => m.seasonId === activeSeason.id && (m.status || 'approved') === 'approved'
+    );
+    const casualCount = activeSeasonMatches.filter((m) => !m.tournamentId).length;
+    const tournCount = activeSeasonMatches.filter((m) => !!m.tournamentId).length;
 
     return (
       <div className="space-y-6">
@@ -334,18 +317,15 @@ export default function DashboardPage() {
               Started: {activeSeason.startedAt ? new Date(activeSeason.startedAt).toLocaleDateString() : 'Unknown'} · {activeSeason.playerIds.length} players
             </p>
           </div>
-          {!activeSeason.isUnstructured && totalRequired > 0 && (
-            <div className="text-right">
-              <p className="text-text-muted text-xs font-heading uppercase tracking-wider">Casual Fixtures (15 / pair)</p>
-              <p className="font-heading font-black text-2xl text-text-primary mt-0.5">
-                {completed}<span className="text-text-muted text-base"> / {totalRequired}</span>
-              </p>
-              <div className="mt-1.5 w-40 h-1.5 rounded-full bg-bg-elevated overflow-hidden">
-                <div className="h-full rounded-full bg-volt transition-all" style={{ width: `${progress}%` }} />
-              </div>
-              <p className="text-text-muted text-[0.65rem] mt-0.5">{remaining} remaining · Tournaments extra</p>
-            </div>
-          )}
+          <div className="text-right">
+            <p className="text-text-muted text-xs font-heading uppercase tracking-wider">Matches Recorded</p>
+            <p className="font-heading font-black text-2xl text-text-primary mt-0.5">
+              {activeSeasonMatches.length} <span className="text-volt text-sm uppercase">Total</span>
+            </p>
+            <p className="text-text-muted text-[0.65rem] mt-0.5 font-mono">
+              {casualCount} Casual · {tournCount} Tournament
+            </p>
+          </div>
         </div>
 
         {/* Mode switcher bar */}
@@ -618,133 +598,12 @@ export default function DashboardPage() {
     );
   };
 
-  const renderFixturesTab = () => {
-    if (!activeSeason) {
-      return <div className="card-glow p-12 text-center"><p className="text-text-muted text-sm">No active season. Fixtures will appear when a new season is started.</p></div>;
-    }
-    if (activeSeason.isUnstructured) {
-      return <div className="card-glow p-12 text-center"><p className="text-text-muted text-sm">{activeSeason.name} is an unstructured season — no fixture system applies.</p></div>;
-    }
-    if (fixturesLoading) {
-      return <div className="flex items-center justify-center py-16"><div className="w-8 h-8 border-4 border-volt/30 border-t-volt rounded-full animate-spin" /></div>;
-    }
-    if (!fixtureStats) {
-      return <div className="card-glow p-12 text-center"><p className="text-text-muted text-sm">Loading fixture data...</p></div>;
-    }
 
-    const { byPair, byPlayer, total, completed, pending } = fixtureStats;
-
-    return (
-      <div className="space-y-6 animate-fade-in">
-        <div className="grid grid-cols-3 gap-4">
-          {[
-            { label: 'Casual Fixtures', value: total, color: 'text-text-primary' },
-            { label: 'Completed', value: completed, color: 'text-volt' },
-            { label: 'Remaining', value: pending, color: 'text-cyan' },
-          ].map((stat) => (
-            <div key={stat.label} className="card-glow p-5 text-center">
-              <p className="text-text-muted font-heading text-xs uppercase tracking-widest">{stat.label}</p>
-              <p className={`text-3xl font-heading font-black mt-1 ${stat.color}`}>{stat.value}</p>
-            </div>
-          ))}
-        </div>
-
-        <div className="card-glow p-0 overflow-hidden">
-          <div className="p-5 border-b border-border">
-            <h3 className="font-heading font-bold text-base uppercase tracking-wide accent-bar">Player Fixture Status</h3>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="table-gaming">
-              <thead>
-                <tr>
-                  <th>Player</th>
-                  <th className="text-center">Total</th>
-                  <th className="text-center text-volt">Completed</th>
-                  <th className="text-center text-cyan">Remaining</th>
-                  <th className="text-center">Progress</th>
-                </tr>
-              </thead>
-              <tbody>
-                {byPlayer.sort((a, b) => a.remainingFixtures - b.remainingFixtures).map((p) => {
-                  const pct = p.totalFixtures > 0 ? Math.round((p.completedFixtures / p.totalFixtures) * 100) : 0;
-                  return (
-                    <tr key={p.userId}>
-                      <td className="font-heading font-semibold text-text-primary">{p.displayName}</td>
-                      <td className="text-center text-text-secondary">{p.totalFixtures}</td>
-                      <td className="text-center text-volt font-bold">{p.completedFixtures}</td>
-                      <td className="text-center"><span className={`font-bold ${p.remainingFixtures === 0 ? 'text-emerald-400' : 'text-cyan'}`}>{p.remainingFixtures}</span></td>
-                      <td>
-                        <div className="flex items-center gap-2">
-                          <div className="w-24 h-1.5 rounded-full bg-bg-elevated overflow-hidden">
-                            <div className="h-full rounded-full bg-volt" style={{ width: `${pct}%` }} />
-                          </div>
-                          <span className="text-text-muted text-xs font-mono w-8">{pct}%</span>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div className="card-glow p-0 overflow-hidden">
-          <div className="p-5 border-b border-border">
-            <h3 className="font-heading font-bold text-base uppercase tracking-wide accent-bar">Matchup Progress (15 Casual Matches / Pair)</h3>
-            <p className="text-xs text-text-muted mt-1">Each pair has 15 casual match slots. Tournament cup matches are separate and extra.</p>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="table-gaming">
-              <thead>
-                <tr>
-                  <th>Matchup</th>
-                  <th className="text-center text-volt">Done</th>
-                  <th className="text-center text-cyan">Left</th>
-                  <th>Progress</th>
-                </tr>
-              </thead>
-              <tbody>
-                {byPair.sort((a, b) => a.pending - b.pending).map((pair) => (
-                  <tr key={pair.pairKey}>
-                    <td>
-                      <span className="font-heading text-sm">
-                        <span className="text-text-primary font-semibold">{pair.player1Name}</span>
-                        <span className="text-text-muted mx-2">vs</span>
-                        <span className="text-text-primary font-semibold">{pair.player2Name}</span>
-                      </span>
-                    </td>
-                    <td className="text-center">
-                      <span className={`font-heading font-bold ${pair.completed === pair.total ? 'text-emerald-400' : 'text-volt'}`}>{pair.completed}</span>
-                    </td>
-                    <td className="text-center">
-                      <span className={`font-heading font-bold ${pair.pending === 0 ? 'text-emerald-400' : 'text-cyan'}`}>{pair.pending}</span>
-                    </td>
-                    <td>
-                      <div className="flex items-center gap-2">
-                        <div className="flex gap-0.5">
-                          {Array.from({ length: pair.total || 15 }).map((_, i) => (
-                            <div key={i} className={`w-2 h-3 rounded-sm ${i < pair.completed ? 'bg-volt' : 'bg-bg-elevated'}`} />
-                          ))}
-                        </div>
-                        {pair.completed === pair.total && <span className="text-emerald-400 text-xs font-heading font-bold uppercase">Done!</span>}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    );
-  };
 
   const tabs: { id: DashTab; label: string; badge?: number }[] = [
     { id: 'season', label: 'This Season' },
     { id: 'alltime', label: 'All Time' },
     { id: 'history', label: 'Season History', badge: completedSeasons.length },
-    { id: 'fixtures', label: 'Fixtures' },
   ];
 
   return (
@@ -833,7 +692,6 @@ export default function DashboardPage() {
           {activeTab === 'season' && renderSeasonTab()}
           {activeTab === 'alltime' && renderAllTimeTab()}
           {activeTab === 'history' && renderHistoryTab()}
-          {activeTab === 'fixtures' && renderFixturesTab()}
         </div>
 
         <div>

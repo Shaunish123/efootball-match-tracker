@@ -5,9 +5,7 @@ import { subscribeToUsers, subscribeToMatches } from '@/lib/db';
 import {
   subscribeToSeasons,
   computeSeasonLeaderboard,
-  getFixtureStats,
 } from '@/lib/seasonDb';
-import type { PairFixtureStats } from '@/lib/seasonDb';
 import { User, Match, Season, SeasonPlayerSnapshot } from '@/lib/types';
 import Link from 'next/link';
 
@@ -20,7 +18,6 @@ export default function SeasonsPage() {
 
   // Leaderboard data for currently selected season
   const [standings, setStandings] = useState<SeasonPlayerSnapshot[]>([]);
-  const [fixtureStats, setFixtureStats] = useState<PairFixtureStats[]>([]);
   const [modeFilter, setModeFilter] = useState<'overall' | 'dream' | 'auth'>('overall');
 
   useEffect(() => {
@@ -94,15 +91,6 @@ export default function SeasonsPage() {
         setStandings(computed);
       });
     }
-
-    // Fixture progress for seasons
-    if (selectedSeason.playerIds) {
-      getFixtureStats(selectedSeason.id, selectedSeason.playerIds).then((stats) => {
-        setFixtureStats(stats.byPair);
-      });
-    } else {
-      setFixtureStats([]);
-    }
   }, [selectedSeason, users, matches, modeFilter]);
 
   const activeSeason = seasons.find((s) => s.status === 'active');
@@ -129,7 +117,7 @@ export default function SeasonsPage() {
               Season <span className="text-volt">History</span> & Archives
             </h1>
             <p className="text-sm text-text-secondary mt-1 max-w-xl">
-              Inspect historical season standings, preserved leaderboard snapshots, and active fixture tracking with equal 15-match pairing quotas.
+              Inspect historical season standings, preserved leaderboard snapshots, and complete match records across casual and tournament play.
             </p>
           </div>
 
@@ -240,38 +228,33 @@ export default function SeasonsPage() {
                 </div>
               </div>
 
-              {/* Progress Summary */}
-              {selectedSeason.totalFixtures > 0 && (
-                <div className="bg-bg-dark/60 rounded-xl p-3 border border-border min-w-[220px]">
-                  <div className="flex justify-between text-xs font-heading uppercase text-text-muted mb-1">
-                    <span>{selectedSeason.seasonNumber === 1 ? 'Season 1 Matches' : 'Casual Fixtures'}</span>
-                    <span className="text-volt font-mono font-bold">
-                      {selectedSeason.completedFixtures || 0} / {selectedSeason.totalFixtures || 0}
-                    </span>
+              {/* Match Summary */}
+              {(() => {
+                const sMatches = matches.filter(
+                  (m) => m.seasonId === selectedSeason.id && (m.status || 'approved') === 'approved'
+                );
+                const count = selectedSeason.snapshot
+                  ? Object.values(selectedSeason.snapshot).reduce((acc, p) => acc + (p.matchesPlayed || 0), 0) / 2
+                  : sMatches.length;
+                const casualCount = sMatches.filter((m) => !m.tournamentId).length;
+                const tournCount = sMatches.filter((m) => !!m.tournamentId).length;
+
+                return (
+                  <div className="bg-bg-dark/60 rounded-xl p-3 border border-border min-w-[200px] text-right">
+                    <div className="text-xs font-heading uppercase text-text-muted mb-0.5">
+                      Total Matches Played
+                    </div>
+                    <div className="text-2xl font-heading font-black text-volt">
+                      {Math.round(count)} <span className="text-xs uppercase text-text-muted font-normal">matches</span>
+                    </div>
+                    {sMatches.length > 0 && (
+                      <div className="text-[0.65rem] text-text-secondary mt-0.5 font-mono">
+                        {casualCount} Casual · {tournCount} Tournament
+                      </div>
+                    )}
                   </div>
-                  <div className="w-full bg-border rounded-full h-2 overflow-hidden">
-                    <div
-                      className="bg-volt h-2 rounded-full transition-all duration-500"
-                      style={{
-                        width: `${
-                          selectedSeason.totalFixtures
-                            ? Math.min(100, Math.round(((selectedSeason.completedFixtures || 0) / selectedSeason.totalFixtures) * 100))
-                            : 0
-                        }%`,
-                      }}
-                    />
-                  </div>
-                  <div className="flex justify-between text-[0.65rem] text-text-muted mt-1 font-mono">
-                    <span>
-                      {selectedSeason.totalFixtures
-                        ? Math.round(((selectedSeason.completedFixtures || 0) / selectedSeason.totalFixtures) * 100)
-                        : 0}
-                      % complete
-                    </span>
-                    <span>{selectedSeason.seasonNumber === 1 ? 'All games recorded' : '15 casual matches / pair'}</span>
-                  </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
           </div>
 
@@ -394,68 +377,6 @@ export default function SeasonsPage() {
             </div>
           </div>
 
-          {/* Fixture Tracker */}
-          {fixtureStats.length > 0 && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-heading font-bold uppercase tracking-wide text-sm text-text-primary">
-                    {selectedSeason.seasonNumber === 1
-                      ? `All Season 1 Matchups (${fixtureStats.length} Unique Matchups)`
-                      : `Casual Matchup Quotas (${fixtureStats.length} Unique Matchups)`}
-                  </h3>
-                  <p className="text-xs text-text-muted">
-                    {selectedSeason.seasonNumber === 1
-                      ? 'All matches played in Season 1 across every matchup. (The 15-casual-match quota applies from Season 2 onwards; tournaments are extra).'
-                      : 'Every pair has exactly 15 casual match slots. Tournament matches can also be played and are extra.'}
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {fixtureStats.map((item) => {
-                  const pct = Math.round((item.completed / item.total) * 100);
-                  const isFinished = item.pending === 0;
-
-                  return (
-                    <div
-                      key={item.pairKey}
-                      className={`card p-4 transition-all ${
-                        isFinished ? 'border-emerald-500/30 bg-emerald-500/5' : 'hover:border-volt/40'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="font-heading font-bold text-xs text-text-primary truncate max-w-[180px]">
-                          {item.player1Name} vs {item.player2Name}
-                        </div>
-                        <span
-                          className={`text-[0.65rem] font-mono px-2 py-0.5 rounded font-bold ${
-                            isFinished
-                              ? 'bg-emerald-500/20 text-emerald-400'
-                              : 'bg-volt/10 text-volt'
-                          }`}
-                        >
-                          {item.completed} / {item.total}
-                        </span>
-                      </div>
-
-                      <div className="w-full bg-border rounded-full h-1.5 overflow-hidden">
-                        <div
-                          className={`h-1.5 rounded-full ${isFinished ? 'bg-emerald-400' : 'bg-volt'}`}
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-
-                      <div className="flex justify-between text-[0.65rem] text-text-muted mt-2 font-mono">
-                        <span>{item.pending} remaining</span>
-                        <span className="font-semibold text-text-secondary">{pct}% done</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
         </div>
       )}
     </div>
