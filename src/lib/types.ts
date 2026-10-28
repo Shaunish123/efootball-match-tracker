@@ -134,6 +134,13 @@ export interface TournamentStandings {
 
 export type SeasonStatus = 'active' | 'completed';
 
+export interface SeasonHpsBreakdown {
+  resultPoints: number;
+  gdBonus: number;
+  cleanSheetBonus: number;
+  handicapBonus: number;
+}
+
 export interface SeasonPlayerSnapshot {
   userId: string;
   displayName: string;
@@ -145,11 +152,18 @@ export interface SeasonPlayerSnapshot {
   goalsFor: number;
   goalsAgainst: number;
   goalDifference: number;
+  ppg?: number;
+  totalHps?: number;
+  avgHps?: number;
+  meetsMinimumMatches?: boolean;
+  hpsBreakdown?: SeasonHpsBreakdown;
   stats: {
     dream: ModeStats;
     auth: ModeStats;
   };
 }
+
+export type SeasonRankingSystem = 'legacy_pts' | 'hps';
 
 export interface Season {
   id: string;
@@ -161,11 +175,17 @@ export interface Season {
   winnerId?: string;
   winnerName?: string;
   playerIds: string[]; // participating player IDs
-  totalFixtures: number; // 15 * C(N,2) — 0 for Season 1
-  completedFixtures: number;
+  totalFixtures?: number;
+  completedFixtures?: number;
   endedManually?: boolean;
-  isUnstructured?: boolean; // Season 1 flag — no fixture system
+  isUnstructured?: boolean; // open/fluid season without fixed fixtures
   snapshot?: Record<string, SeasonPlayerSnapshot>; // finalized leaderboard
+  // HPS Ranking System fields
+  rankingSystem?: SeasonRankingSystem;
+  handicapPlayerId?: string | null;
+  handicapPlayerName?: string | null;
+  handicapBonus?: number; // e.g. 0.75
+  minMatchesRequired?: number; // default 35
 }
 
 export type FixtureStatus = 'pending' | 'completed';

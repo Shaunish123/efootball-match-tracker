@@ -4,6 +4,7 @@ import {
   migrateSeason1,
   startNewSeason,
   endSeason,
+  updateSeasonSettings,
   getAllSeasons,
   getActiveSeason,
   getFixtureStats,
@@ -34,7 +35,16 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { action, playerIds, seasonId } = body;
+    const {
+      action,
+      playerIds,
+      seasonId,
+      handicapPlayerId,
+      handicapPlayerName,
+      handicapBonus,
+      minMatchesRequired,
+      rankingSystem,
+    } = body;
 
     const candidateAuth = getAuth(req, body);
     if (!verifyAdminRequest(candidateAuth)) {
@@ -50,8 +60,35 @@ export async function POST(req: NextRequest) {
       if (!playerIds || !Array.isArray(playerIds) || playerIds.length < 2) {
         return NextResponse.json({ success: false, error: 'playerIds array with at least 2 players is required' }, { status: 400 });
       }
-      const newSeasonId = await startNewSeason(playerIds);
-      return NextResponse.json({ success: true, seasonId: newSeasonId, message: 'New season started successfully' });
+      const newSeasonId = await startNewSeason({
+        playerIds,
+        handicapPlayerId,
+        handicapPlayerName,
+        handicapBonus: typeof handicapBonus === 'number' ? handicapBonus : (handicapBonus ? parseFloat(handicapBonus) : 0.75),
+        minMatchesRequired: typeof minMatchesRequired === 'number' ? minMatchesRequired : (minMatchesRequired ? parseInt(minMatchesRequired, 10) : 35),
+      });
+      return NextResponse.json({
+        success: true,
+        seasonId: newSeasonId,
+        message: 'New season launched with HPS ranking system!',
+      });
+    }
+
+    if (action === 'update-settings') {
+      if (!seasonId) {
+        return NextResponse.json({ success: false, error: 'seasonId is required' }, { status: 400 });
+      }
+      await updateSeasonSettings(seasonId, {
+        handicapPlayerId,
+        handicapPlayerName,
+        handicapBonus: handicapBonus !== undefined ? parseFloat(handicapBonus) : undefined,
+        minMatchesRequired: minMatchesRequired !== undefined ? parseInt(minMatchesRequired, 10) : undefined,
+        rankingSystem,
+      });
+      return NextResponse.json({
+        success: true,
+        message: 'Special powers and season settings updated successfully!',
+      });
     }
 
     if (action === 'end') {

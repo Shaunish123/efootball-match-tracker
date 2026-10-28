@@ -31,6 +31,17 @@ export default function AdminPage() {
   const [migratingSeason1, setMigratingSeason1] = useState<boolean>(false);
   const [endingSeason, setEndingSeason] = useState<boolean>(false);
   const [showEndModal, setShowEndModal] = useState<boolean>(false);
+
+  // Special Powers / Handicap configuration state
+  const [startHandicapPlayerId, setStartHandicapPlayerId] = useState<string>('');
+  const [startHandicapBonus, setStartHandicapBonus] = useState<number>(0.75);
+  const [startMinMatches, setStartMinMatches] = useState<number>(35);
+
+  const [editHandicapPlayerId, setEditHandicapPlayerId] = useState<string>('');
+  const [editHandicapBonus, setEditHandicapBonus] = useState<number>(0.75);
+  const [editMinMatches, setEditMinMatches] = useState<number>(35);
+  const [savingSeasonSettings, setSavingSeasonSettings] = useState<boolean>(false);
+
   const [activeFixtureStats, setActiveFixtureStats] = useState<{
     byPair: PairFixtureStats[];
     byPlayer: PlayerFixtureStats[];
@@ -57,15 +68,33 @@ export default function AdminPage() {
     };
   }, []);
 
-  useEffect(() => {
-    if (users.length > 0 && selectedPlayerIds.length === 0) {
-      setSelectedPlayerIds(users.map((u) => u.id));
-    }
-  }, [users, selectedPlayerIds.length]);
-
   const activeSeason = seasons.find((s) => s.status === 'active') || null;
   const completedSeasons = seasons.filter((s) => s.status === 'completed');
   const season1Exists = seasons.some((s) => s.seasonNumber === 1);
+
+  // Initialize player selection and default handicap player (Ashu if found)
+  useEffect(() => {
+    if (users.length > 0) {
+      if (selectedPlayerIds.length === 0) {
+        setSelectedPlayerIds(users.map((u) => u.id));
+      }
+      if (!startHandicapPlayerId) {
+        const ashu = users.find((u) => (u.displayName || u.name || '').toLowerCase().includes('ashu'));
+        if (ashu) {
+          setStartHandicapPlayerId(ashu.id);
+        }
+      }
+    }
+  }, [users, selectedPlayerIds.length, startHandicapPlayerId]);
+
+  // Sync edit state with active season
+  useEffect(() => {
+    if (activeSeason) {
+      setEditHandicapPlayerId(activeSeason.handicapPlayerId || '');
+      setEditHandicapBonus(typeof activeSeason.handicapBonus === 'number' ? activeSeason.handicapBonus : 0.75);
+      setEditMinMatches(typeof activeSeason.minMatchesRequired === 'number' ? activeSeason.minMatchesRequired : 35);
+    }
+  }, [activeSeason?.id, activeSeason?.handicapPlayerId, activeSeason?.handicapBonus, activeSeason?.minMatchesRequired]);
 
   useEffect(() => {
     if (activeSeason && !activeSeason.isUnstructured && activeSeason.playerIds) {
@@ -211,17 +240,26 @@ export default function AdminPage() {
     const token = getAdminToken();
     setStartingSeason(true);
     try {
+      const chosenUser = users.find((u) => u.id === startHandicapPlayerId);
       const res = await fetch('/api/admin/seasons', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ action: 'start', playerIds: selectedPlayerIds, token }),
+        body: JSON.stringify({
+          action: 'start',
+          playerIds: selectedPlayerIds,
+          handicapPlayerId: startHandicapPlayerId || null,
+          handicapPlayerName: chosenUser ? (chosenUser.displayName || chosenUser.name) : null,
+          handicapBonus: Number(startHandicapBonus) || 0.75,
+          minMatchesRequired: Number(startMinMatches) || 35,
+          token,
+        }),
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        showNotification(`✓ ${data.message || 'New season started successfully!'}`);
+        showNotification(`✓ ${data.message || 'New season started successfully with HPS ranking system!'}`);
       } else {
         showNotification(data.error || 'Failed to start season', true);
       }
@@ -229,6 +267,41 @@ export default function AdminPage() {
       showNotification('Server connection error while starting season', true);
     } finally {
       setStartingSeason(false);
+    }
+  };
+
+  const handleUpdateSeasonSettings = async () => {
+    if (!activeSeason) return;
+    const token = getAdminToken();
+    setSavingSeasonSettings(true);
+    try {
+      const chosenUser = users.find((u) => u.id === editHandicapPlayerId);
+      const res = await fetch('/api/admin/seasons', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          action: 'update-settings',
+          seasonId: activeSeason.id,
+          handicapPlayerId: editHandicapPlayerId || null,
+          handicapPlayerName: chosenUser ? (chosenUser.displayName || chosenUser.name) : null,
+          handicapBonus: Number(editHandicapBonus) || 0.75,
+          minMatchesRequired: Number(editMinMatches) || 35,
+          token,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showNotification('✓ Special powers & season settings saved successfully!');
+      } else {
+        showNotification(data.error || 'Failed to update settings', true);
+      }
+    } catch (err: any) {
+      showNotification(err?.message || 'Error updating season settings', true);
+    } finally {
+      setSavingSeasonSettings(false);
     }
   };
 
@@ -905,69 +978,261 @@ export default function AdminPage() {
         <div className="space-y-6">
           {/* Active Season Overview Card */}
           {activeSeason ? (
-            <div className="p-6 rounded-2xl bg-gradient-to-r from-emerald-500/10 via-bg-card to-bg-card border border-emerald-500/30 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center justify-center font-heading font-black text-lg">
-                    S{activeSeason.seasonNumber}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h2 className="font-heading font-black text-xl text-text-primary uppercase">
-                        {activeSeason.name}
-                      </h2>
-                      <span className="px-2 py-0.5 rounded-full text-[0.65rem] font-bold bg-emerald-500 text-bg-primary">
-                        ACTIVE
-                      </span>
+            <div className="space-y-6">
+              {/* Active Season Card */}
+              <div className="p-6 rounded-2xl bg-gradient-to-r from-emerald-500/10 via-bg-card to-bg-card border border-emerald-500/30 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center justify-center font-heading font-black text-lg">
+                      S{activeSeason.seasonNumber}
                     </div>
-                    <p className="text-xs text-text-muted font-mono mt-0.5">
-                      Started: {new Date(activeSeason.startedAt).toLocaleDateString()} • {activeSeason.playerIds?.length || 0} Contenders
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h2 className="font-heading font-black text-xl text-text-primary uppercase">
+                          {activeSeason.name}
+                        </h2>
+                        <span className="px-2 py-0.5 rounded-full text-[0.65rem] font-bold bg-emerald-500 text-bg-primary">
+                          ACTIVE
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full text-[0.65rem] font-bold bg-volt/15 text-volt border border-volt/30">
+                          {activeSeason.rankingSystem === 'hps' || activeSeason.seasonNumber >= 3
+                            ? '⚡ HPS System'
+                            : 'Classic PTS System'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-text-muted font-mono mt-0.5">
+                        Started: {new Date(activeSeason.startedAt).toLocaleDateString()} • {activeSeason.playerIds?.length || 0} Contenders
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <Link
+                      href="/seasons"
+                      className="btn-secondary text-xs uppercase font-heading font-bold py-2 px-3"
+                    >
+                      View Public Standings →
+                    </Link>
+                    <button
+                      onClick={() => setShowEndModal(true)}
+                      className="px-4 py-2 rounded-xl bg-red/15 hover:bg-red/25 border border-red/40 text-red font-heading font-bold text-xs uppercase tracking-wider transition-all flex items-center gap-2"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <rect x="3" y="3" width="18" height="18" rx="2" />
+                      </svg>
+                      End Season Manually
+                    </button>
+                  </div>
+                </div>
+
+                {/* Match Tracking */}
+                {(() => {
+                  const sMatches = matches.filter(
+                    (m) => m.seasonId === activeSeason.id && (m.status || 'approved') === 'approved'
+                  );
+                  const casualCount = sMatches.filter((m) => !m.tournamentId).length;
+                  const tournCount = sMatches.filter((m) => !!m.tournamentId).length;
+
+                  return (
+                    <div className="space-y-2 pt-2 border-t border-border/50">
+                      <div className="flex justify-between text-xs font-mono">
+                        <span className="text-text-muted">Season Matches Recorded (Casual + Tournament)</span>
+                        <span className="text-volt font-bold">
+                          {sMatches.length} matches ({casualCount} casual, {tournCount} tournament)
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-[0.7rem] text-text-muted font-mono">
+                        <span className="text-emerald-400">● Open Fluid Season</span>
+                        <span>No fixed match quotas • Ranked by Average HPS</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Special Powers (Handicap) Management for Active Season */}
+              <div className="p-6 rounded-2xl bg-bg-card border border-volt/30 space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-4">
+                  <div className="flex items-center gap-3">
+                    <span className="w-9 h-9 rounded-xl bg-volt/15 text-volt border border-volt/30 flex items-center justify-center font-bold text-lg">
+                      ⚡
+                    </span>
+                    <div>
+                      <h3 className="font-heading font-black text-base uppercase text-text-primary">
+                        Special Powers & Handicap Settings
+                      </h3>
+                      <p className="text-xs text-text-muted">
+                        Configure the weak player handicap bonus and minimum match requirement for {activeSeason.name}.
+                      </p>
+                    </div>
+                  </div>
+                  {activeSeason.handicapPlayerName && (
+                    <span className="self-start sm:self-auto px-3 py-1 rounded-full text-xs font-heading font-bold bg-volt/20 text-volt border border-volt/40">
+                      Active Boost: {activeSeason.handicapPlayerName} (+{activeSeason.handicapBonus ?? 0.75} HPS)
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {/* Select Weak Player */}
+                  <div>
+                    <label className="block text-xs font-heading font-bold uppercase text-text-muted mb-1.5">
+                      Designated Player (Special Powers)
+                    </label>
+                    <select
+                      value={editHandicapPlayerId}
+                      onChange={(e) => setEditHandicapPlayerId(e.target.value)}
+                      className="input w-full text-sm bg-bg-dark border-border text-text-primary rounded-xl p-2.5"
+                    >
+                      <option value="">None (No player receives handicap)</option>
+                      {users.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.displayName || u.name} {(u.displayName || u.name || '').toLowerCase().includes('ashu') ? '(Recommended)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[0.65rem] text-text-muted mt-1 font-mono">
+                      Receives handicap points on every approved match regardless of result.
+                    </p>
+                  </div>
+
+                  {/* Handicap Bonus */}
+                  <div>
+                    <label className="block text-xs font-heading font-bold uppercase text-text-muted mb-1.5">
+                      Handicap Bonus (HPS / match)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.05"
+                      min="0"
+                      max="5"
+                      value={editHandicapBonus}
+                      onChange={(e) => setEditHandicapBonus(parseFloat(e.target.value) || 0)}
+                      className="input w-full text-sm bg-bg-dark border-border text-text-primary rounded-xl p-2.5 font-mono"
+                    />
+                    <p className="text-[0.65rem] text-text-muted mt-1 font-mono">
+                      Default: +0.75 HPS per approved match.
+                    </p>
+                  </div>
+
+                  {/* Minimum Matches Required */}
+                  <div>
+                    <label className="block text-xs font-heading font-bold uppercase text-text-muted mb-1.5">
+                      Min Matches for Season End Podium
+                    </label>
+                    <input
+                      type="number"
+                      step="1"
+                      min="5"
+                      max="100"
+                      value={editMinMatches}
+                      onChange={(e) => setEditMinMatches(parseInt(e.target.value, 10) || 35)}
+                      className="input w-full text-sm bg-bg-dark border-border text-text-primary rounded-xl p-2.5 font-mono"
+                    />
+                    <p className="text-[0.65rem] text-text-muted mt-1 font-mono">
+                      Rule: Players with fewer matches moved to 4th (Min Requirements Not Met).
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3">
-                  <Link
-                    href="/seasons"
-                    className="btn-secondary text-xs uppercase font-heading font-bold py-2 px-3"
-                  >
-                    View Public Standings →
-                  </Link>
+                <div className="flex justify-end pt-2">
                   <button
-                    onClick={() => setShowEndModal(true)}
-                    className="px-4 py-2 rounded-xl bg-red/15 hover:bg-red/25 border border-red/40 text-red font-heading font-bold text-xs uppercase tracking-wider transition-all flex items-center gap-2"
+                    onClick={handleUpdateSeasonSettings}
+                    disabled={savingSeasonSettings}
+                    className="btn-volt text-xs font-heading font-bold uppercase px-5 py-2.5 flex items-center gap-2"
                   >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <rect x="3" y="3" width="18" height="18" rx="2" />
-                    </svg>
-                    End Season Manually
+                    {savingSeasonSettings ? (
+                      <>
+                        <span className="w-3.5 h-3.5 border-2 border-bg-primary/30 border-t-bg-primary rounded-full animate-spin" />
+                        Saving Settings...
+                      </>
+                    ) : (
+                      'Save Special Powers & Settings'
+                    )}
                   </button>
                 </div>
               </div>
 
-              {/* Match Tracking */}
-              {(() => {
-                const sMatches = matches.filter(
-                  (m) => m.seasonId === activeSeason.id && (m.status || 'approved') === 'approved'
-                );
-                const casualCount = sMatches.filter((m) => !m.tournamentId).length;
-                const tournCount = sMatches.filter((m) => !!m.tournamentId).length;
-
-                return (
-                  <div className="space-y-2 pt-2 border-t border-border/50">
-                    <div className="flex justify-between text-xs font-mono">
-                      <span className="text-text-muted">Season Matches Recorded (Casual + Tournament)</span>
-                      <span className="text-volt font-bold">
-                        {sMatches.length} matches ({casualCount} casual, {tournCount} tournament)
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-[0.7rem] text-text-muted font-mono">
-                      <span className="text-emerald-400">● Fluid Season Active</span>
-                      <span>Play unlimited matches until season is ended</span>
-                    </div>
+              {/* Contenders Minimum Match Qualification Tracker */}
+              <div className="card p-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-heading font-black text-base text-text-primary uppercase tracking-wide">
+                      Contender Eligibility & Minimum Match Tracker ({activeSeason.minMatchesRequired || 35} Matches Required)
+                    </h3>
+                    <p className="text-xs text-text-muted">
+                      Players must play at least {activeSeason.minMatchesRequired || 35} approved matches to qualify for the final leaderboard podium upon season conclusion.
+                    </p>
                   </div>
-                );
-              })()}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                  {activeSeason.playerIds.map((pId) => {
+                    const u = users.find((user) => user.id === pId);
+                    const sMatches = matches.filter(
+                      (m) =>
+                        m.seasonId === activeSeason.id &&
+                        (m.status || 'approved') === 'approved' &&
+                        (m.player1Id === pId || m.player2Id === pId)
+                    );
+                    const played = sMatches.length;
+                    const target = activeSeason.minMatchesRequired || 35;
+                    const pct = Math.min(100, Math.round((played / target) * 100));
+                    const isQualified = played >= target;
+                    const isSpecialPower = pId === activeSeason.handicapPlayerId;
+
+                    return (
+                      <div
+                        key={pId}
+                        className={`p-4 rounded-xl border transition-all ${
+                          isQualified
+                            ? 'bg-emerald-500/5 border-emerald-500/40'
+                            : 'bg-bg-dark/40 border-border hover:border-volt/30'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="font-heading font-bold text-sm text-text-primary truncate">
+                            {u?.displayName || u?.name || pId}
+                          </span>
+                          {isSpecialPower && (
+                            <span className="px-1.5 py-0.5 rounded text-[0.6rem] font-bold bg-volt/20 text-volt border border-volt/30">
+                              ⚡ +{activeSeason.handicapBonus ?? 0.75}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-between text-xs font-mono mb-1.5">
+                          <span className="text-text-muted">Approved Matches</span>
+                          <span className={`font-bold ${isQualified ? 'text-emerald-400' : 'text-volt'}`}>
+                            {played} / {target}
+                          </span>
+                        </div>
+
+                        <div className="w-full bg-border rounded-full h-1.5 overflow-hidden mb-2">
+                          <div
+                            className={`h-1.5 rounded-full transition-all duration-500 ${
+                              isQualified ? 'bg-emerald-400' : 'bg-volt'
+                            }`}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+
+                        <div className="text-[0.65rem] font-mono">
+                          {isQualified ? (
+                            <span className="text-emerald-400 font-bold flex items-center gap-1">
+                              ✓ Qualified for Podium
+                            </span>
+                          ) : (
+                            <span className="text-amber-400">
+                              Needs {target - played} more matches
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           ) : (
             <div className="space-y-6">
@@ -982,7 +1247,7 @@ export default function AdminPage() {
                       No Active Season
                     </h2>
                     <p className="text-xs text-text-muted mt-0.5">
-                      Select participating players below to launch the next competitive season with equal 15-match pairing quotas.
+                      Configure special powers and select contenders below to launch the next season with the HPS ranking system.
                     </p>
                   </div>
                 </div>
@@ -1000,7 +1265,7 @@ export default function AdminPage() {
                         Inaugural Season 1 Migration Needed
                       </h3>
                       <p className="text-xs text-text-muted">
-                        Preserve all historical non-tournament matches as completed "Season 1" (unstructured season) before starting Season 2.
+                        Preserve all historical non-tournament matches as completed "Season 1" (unstructured season) before starting new seasons.
                       </p>
                     </div>
                   </div>
@@ -1021,14 +1286,17 @@ export default function AdminPage() {
                 </div>
               )}
 
-              {/* Start New Season Form */}
+              {/* Start New Season Form with Special Powers Prompt */}
               <div className="p-6 rounded-2xl bg-bg-card border border-border space-y-6">
                 <div>
-                  <h3 className="font-heading font-black text-lg uppercase tracking-wide text-text-primary">
-                    Launch New Structured Season
+                  <h3 className="font-heading font-black text-lg uppercase tracking-wide text-text-primary flex items-center gap-2">
+                    <span>🚀 Launch New Season</span>
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-volt/15 text-volt border border-volt/30">
+                      HPS Ranking System
+                    </span>
                   </h3>
                   <p className="text-xs text-text-secondary mt-1">
-                    Select players who will compete. The system generates an equal quota of 15 regular-season matches for every unique player matchup.
+                    No fixed fixture quotas. Players compete freely across casual and tournament matches. Rankings use the HPS (Handicap Performance Score) formula with Average HPS.
                   </p>
                 </div>
 
@@ -1057,7 +1325,7 @@ export default function AdminPage() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
                     {users.map((user) => {
                       const isSelected = selectedPlayerIds.includes(user.id);
                       return (
@@ -1089,123 +1357,83 @@ export default function AdminPage() {
                   </div>
                 </div>
 
-                {/* Fixture calculation preview */}
-                <div className="p-4 rounded-xl bg-bg-dark/60 border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-mono">
-                  <div>
-                    <span className="text-text-muted">Fixture Formula: </span>
-                    <span className="text-text-primary font-bold">
-                      15 matches × {selectedPlayerIds.length >= 2 ? (selectedPlayerIds.length * (selectedPlayerIds.length - 1)) / 2 : 0} pairs
+                {/* Special Powers (Handicap Prompt) */}
+                <div className="p-5 rounded-2xl bg-volt/5 border border-volt/30 space-y-4">
+                  <div className="flex items-center gap-2.5">
+                    <span className="w-8 h-8 rounded-lg bg-volt/20 text-volt flex items-center justify-center font-bold text-base">
+                      ⚡
                     </span>
+                    <div>
+                      <h4 className="font-heading font-bold text-sm uppercase text-text-primary">
+                        Assign Special Powers (Weak Player Handicap)
+                      </h4>
+                      <p className="text-xs text-text-muted">
+                        Select a player to receive an HPS handicap boost on every approved match to level the playing field.
+                      </p>
+                    </div>
                   </div>
-                  <div className="text-volt font-bold text-sm">
-                    Total Fixtures: {selectedPlayerIds.length >= 2 ? (15 * selectedPlayerIds.length * (selectedPlayerIds.length - 1)) / 2 : 0}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-heading font-bold uppercase text-text-muted mb-1.5">
+                        Choose Weak Player / Special Powers
+                      </label>
+                      <select
+                        value={startHandicapPlayerId}
+                        onChange={(e) => setStartHandicapPlayerId(e.target.value)}
+                        className="input w-full text-sm bg-bg-dark border-border text-text-primary rounded-xl p-2.5"
+                      >
+                        <option value="">None (Standard HPS without handicap)</option>
+                        {users.map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {u.displayName || u.name} {(u.displayName || u.name || '').toLowerCase().includes('ashu') ? '(Recommended)' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-heading font-bold uppercase text-text-muted mb-1.5">
+                        Handicap Bonus Points per match
+                      </label>
+                      <input
+                        type="number"
+                        step="0.05"
+                        min="0"
+                        max="5"
+                        value={startHandicapBonus}
+                        onChange={(e) => setStartHandicapBonus(parseFloat(e.target.value) || 0)}
+                        className="input w-full text-sm bg-bg-dark border-border text-text-primary rounded-xl p-2.5 font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-border/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-mono text-text-muted">
+                    <div>
+                      <span className="text-text-primary font-bold">Rule Preview: </span>
+                      Handicap player gets +{startHandicapBonus} HPS for every approved match regardless of result.
+                    </div>
+                    <div>
+                      <span className="text-volt font-bold">Min Requirement: </span>
+                      {startMinMatches} approved matches to rank on season podium.
+                    </div>
                   </div>
                 </div>
 
                 <button
                   onClick={handleStartSeason}
                   disabled={startingSeason || selectedPlayerIds.length < 2}
-                  className="btn-volt w-full flex items-center justify-center gap-2 py-3"
+                  className="btn-volt w-full flex items-center justify-center gap-2 py-3 text-sm font-heading font-black tracking-wider"
                 >
                   {startingSeason ? (
                     <>
                       <span className="w-4 h-4 border-2 border-bg-primary/30 border-t-bg-primary rounded-full animate-spin" />
-                      Generating Fixtures & Launching Season...
+                      Launching Season with HPS System...
                     </>
                   ) : (
-                    `Launch Season (${selectedPlayerIds.length >= 2 ? (15 * selectedPlayerIds.length * (selectedPlayerIds.length - 1)) / 2 : 0} Fixtures)`
+                    `Launch Season (${selectedPlayerIds.length} Contenders · HPS System)`
                   )}
                 </button>
-              </div>
-            </div>
-          )}
-
-          {/* Active Fixture Breakdown */}
-          {activeSeason && activeFixtureStats && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-heading font-black text-base text-text-primary uppercase tracking-wide">
-                    15-Match Pairing Quota Progress
-                  </h3>
-                  <p className="text-xs text-text-muted">
-                    Every unique matchup has 15 casual match slots. Extra tournament matches can also be played and are tracked separately.
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {activeFixtureStats.byPair.map((pair) => {
-                  const pct = Math.round((pair.completed / pair.total) * 100);
-                  const isDone = pair.pending === 0;
-                  return (
-                    <div
-                      key={pair.pairKey}
-                      className={`card p-4 transition-all ${
-                        isDone ? 'border-emerald-500/40 bg-emerald-500/5' : 'hover:border-volt/40'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="font-heading font-bold text-xs text-text-primary truncate max-w-[170px]">
-                          {pair.player1Name} vs {pair.player2Name}
-                        </span>
-                        <span
-                          className={`text-[0.65rem] font-mono px-2 py-0.5 rounded font-bold ${
-                            isDone ? 'bg-emerald-500/20 text-emerald-400' : 'bg-volt/10 text-volt'
-                          }`}
-                        >
-                          {pair.completed} / {pair.total}
-                        </span>
-                      </div>
-                      <div className="w-full bg-border rounded-full h-1.5 overflow-hidden">
-                        <div
-                          className={`h-1.5 rounded-full ${isDone ? 'bg-emerald-400' : 'bg-volt'}`}
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                      <div className="flex justify-between text-[0.65rem] text-text-muted mt-2 font-mono">
-                        <span>{pair.pending} remaining</span>
-                        <span>{pct}% complete</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Per-Player Match Balance Table */}
-              <div className="card p-5 space-y-3">
-                <h4 className="font-heading font-bold text-sm text-text-primary uppercase">
-                  Player Match Balance Verification
-                </h4>
-                <div className="overflow-x-auto">
-                  <table className="table-modern">
-                    <thead>
-                      <tr>
-                        <th>Player</th>
-                        <th className="text-center">Total Assigned</th>
-                        <th className="text-center">Completed</th>
-                        <th className="text-center">Remaining</th>
-                        <th className="text-center font-bold text-volt">Progress</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {activeFixtureStats.byPlayer.map((p) => {
-                        const pct = p.totalFixtures > 0 ? Math.round((p.completedFixtures / p.totalFixtures) * 100) : 0;
-                        return (
-                          <tr key={p.userId}>
-                            <td className="font-heading font-bold text-xs text-text-primary">
-                              {p.displayName}
-                            </td>
-                            <td className="text-center font-mono text-xs">{p.totalFixtures}</td>
-                            <td className="text-center font-mono text-xs text-emerald-400 font-bold">{p.completedFixtures}</td>
-                            <td className="text-center font-mono text-xs text-amber-400">{p.remainingFixtures}</td>
-                            <td className="text-center font-mono text-xs font-bold text-volt">{pct}%</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
               </div>
             </div>
           )}
@@ -1273,9 +1501,13 @@ export default function AdminPage() {
               </div>
             </div>
 
-            <div className="p-4 rounded-xl bg-bg-dark border border-border space-y-2 text-xs font-mono">
+            <div className="p-4 rounded-xl bg-bg-dark border border-border space-y-3 text-xs font-mono">
               <div className="text-text-secondary leading-relaxed">
-                Ending the season now will freeze the current standings, save a permanent snapshot to Season History, and crown the current leader as Champion.
+                Ending the season will freeze the final standings, save a permanent snapshot to Season History, and crown the eligible leader as Champion.
+              </div>
+              <div className="p-3 rounded-lg bg-volt/10 border border-volt/30 text-volt text-[0.75rem]">
+                <span className="font-bold uppercase tracking-wider block mb-1">⚖️ HPS Final Ranking Rule:</span>
+                Players with at least {activeSeason.minMatchesRequired || 35} approved matches are ranked by Average HPS. Any player with fewer than {activeSeason.minMatchesRequired || 35} matches will be moved to 4th and marked <span className="font-bold underline">"Minimum Requirements Not Met"</span>.
               </div>
             </div>
 

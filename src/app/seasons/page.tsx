@@ -5,9 +5,11 @@ import { subscribeToUsers, subscribeToMatches } from '@/lib/db';
 import {
   subscribeToSeasons,
   computeSeasonLeaderboard,
+  isSeasonHps,
 } from '@/lib/seasonDb';
 import { User, Match, Season, SeasonPlayerSnapshot } from '@/lib/types';
 import Link from 'next/link';
+import HpsExplainer from '@/components/HpsExplainer';
 
 export default function SeasonsPage() {
   const [users, setUsers] = useState<User[]>([]);
@@ -53,11 +55,26 @@ export default function SeasonsPage() {
   // Compute standings whenever selected season, matches, or users change
   useEffect(() => {
     if (!selectedSeason || users.length === 0) return;
+    const isHps = isSeasonHps(selectedSeason);
 
-    // If season has a finalized snapshot, use it!
-    if (selectedSeason.snapshot && Object.keys(selectedSeason.snapshot).length > 0) {
-      const snapList = Object.values(selectedSeason.snapshot);
-      snapList.sort((a, b) => {
+    const sortList = (list: SeasonPlayerSnapshot[]) => {
+      return [...list].sort((a, b) => {
+        // If HPS season, rank primarily by Average HPS
+        if (isHps) {
+          // If season completed, players not meeting requirements are moved to bottom
+          if (selectedSeason.status === 'completed') {
+            const aMet = a.meetsMinimumMatches !== false;
+            const bMet = b.meetsMinimumMatches !== false;
+            if (aMet !== bMet) return aMet ? -1 : 1;
+          }
+          const aAvg = a.avgHps ?? 0;
+          const bAvg = b.avgHps ?? 0;
+          if (bAvg !== aAvg) return bAvg - aAvg;
+          const aTotal = a.totalHps ?? 0;
+          const bTotal = b.totalHps ?? 0;
+          if (bTotal !== aTotal) return bTotal - aTotal;
+        }
+
         if (modeFilter === 'overall') {
           if (b.points !== a.points) return b.points - a.points;
           if (b.goalDifference !== a.goalDifference) return b.goalDifference - a.goalDifference;
@@ -69,26 +86,18 @@ export default function SeasonsPage() {
         if (sB.goalDifference !== sA.goalDifference) return sB.goalDifference - sA.goalDifference;
         return sB.goalsFor - sA.goalsFor;
       });
-      setStandings(snapList);
+    };
+
+    // If season has a finalized snapshot, use it!
+    if (selectedSeason.snapshot && Object.keys(selectedSeason.snapshot).length > 0) {
+      setStandings(sortList(Object.values(selectedSeason.snapshot)));
     } else {
       // Live calculation from matches tagged with this seasonId
       const pIds = selectedSeason.playerIds && selectedSeason.playerIds.length > 0
         ? selectedSeason.playerIds
         : users.map((u) => u.id);
       computeSeasonLeaderboard(selectedSeason.id, pIds).then((computed) => {
-        computed.sort((a, b) => {
-          if (modeFilter === 'overall') {
-            if (b.points !== a.points) return b.points - a.points;
-            if (b.goalDifference !== a.goalDifference) return b.goalDifference - a.goalDifference;
-            return b.goalsFor - a.goalsFor;
-          }
-          const sA = a.stats?.[modeFilter] || { points: 0, goalDifference: 0, goalsFor: 0 };
-          const sB = b.stats?.[modeFilter] || { points: 0, goalDifference: 0, goalsFor: 0 };
-          if (sB.points !== sA.points) return sB.points - sA.points;
-          if (sB.goalDifference !== sA.goalDifference) return sB.goalDifference - sA.goalDifference;
-          return sB.goalsFor - sA.goalsFor;
-        });
-        setStandings(computed);
+        setStandings(sortList(computed));
       });
     }
   }, [selectedSeason, users, matches, modeFilter]);
@@ -298,6 +307,13 @@ export default function SeasonsPage() {
                     <th className="text-center">GA</th>
                     <th className="text-center">GD</th>
                     <th className="text-center font-bold text-volt">PTS</th>
+                    <th className="text-center font-bold text-cyan" title="Points Per Game">PPG</th>
+                    {isSeasonHps(selectedSeason) && (
+                      <>
+                        <th className="text-center text-xs font-bold text-text-secondary" title="Total Handicap Performance Score">HPS</th>
+                        <th className="text-center text-xs font-black text-amber-400 bg-amber-400/10" title="Average HPS per approved match">AVG HPS</th>
+                      </>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
@@ -316,8 +332,14 @@ export default function SeasonsPage() {
                             points: 0,
                           };
 
+                    const isHps = isSeasonHps(selectedSeason);
+                    const isHandicapPlayer = isHps && p.userId === selectedSeason.handicapPlayerId;
+                    const ppg = stats.matchesPlayed > 0 ? (stats.points / stats.matchesPlayed).toFixed(2) : '0.00';
+                    const isCompleted = selectedSeason.status === 'completed';
+                    const notMet = isHps && isCompleted && p.meetsMinimumMatches === false;
+
                     return (
-                      <tr key={p.userId} className="group hover:bg-bg-card-hover transition-colors">
+                      <tr key={p.userId} className={`group hover:bg-bg-card-hover transition-colors ${notMet ? 'opacity-70 bg-red-500/5' : ''}`}>
                         <td className="text-center">
                           <span
                             className={`inline-flex items-center justify-center w-6 h-6 rounded-md font-mono text-xs font-bold border ${getRankBadgeClass(
@@ -328,17 +350,29 @@ export default function SeasonsPage() {
                           </span>
                         </td>
                         <td>
-                          <Link
-                            href={`/users/${p.userId}`}
-                            className="font-heading font-bold text-sm text-text-primary hover:text-volt transition-colors flex items-center gap-2"
-                          >
-                            <span>{p.displayName}</span>
-                            {idx === 0 && selectedSeason.status === 'completed' && (
-                              <span className="text-amber-400 text-xs" title="Season Winner">
-                                👑 Champion
+                          <div className="flex flex-col">
+                            <Link
+                              href={`/users/${p.userId}`}
+                              className="font-heading font-bold text-sm text-text-primary hover:text-volt transition-colors flex items-center gap-2"
+                            >
+                              <span>{p.displayName}</span>
+                              {idx === 0 && selectedSeason.status === 'completed' && !notMet && (
+                                <span className="text-amber-400 text-xs" title="Season Winner">
+                                  👑 Champion
+                                </span>
+                              )}
+                              {isHandicapPlayer && (
+                                <span className="px-1.5 py-0.5 rounded text-[0.6rem] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                                  ⚡ +{selectedSeason.handicapBonus ?? 0.75} HPS
+                                </span>
+                              )}
+                            </Link>
+                            {notMet && (
+                              <span className="text-[0.65rem] text-red font-heading uppercase font-bold mt-0.5">
+                                ⚠️ Minimum Requirements Not Met (&lt;{selectedSeason.minMatchesRequired || 35} MP)
                               </span>
                             )}
-                          </Link>
+                          </div>
                         </td>
                         <td className="text-center font-mono text-xs text-text-secondary">{stats.matchesPlayed}</td>
                         <td className="text-center font-mono text-xs text-emerald-400 font-bold">{stats.wins}</td>
@@ -362,12 +396,25 @@ export default function SeasonsPage() {
                         <td className="text-center font-mono text-sm font-bold text-volt">
                           {stats.points}
                         </td>
+                        <td className="text-center font-mono text-xs font-bold text-cyan">
+                          {ppg}
+                        </td>
+                        {isHps && (
+                          <>
+                            <td className="text-center font-mono text-xs text-text-secondary">
+                              {p.totalHps !== undefined ? p.totalHps.toFixed(2) : '—'}
+                            </td>
+                            <td className="text-center font-mono text-sm font-black text-amber-400 bg-amber-400/5">
+                              {p.avgHps !== undefined ? p.avgHps.toFixed(2) : '—'}
+                            </td>
+                          </>
+                        )}
                       </tr>
                     );
                   })}
                   {standings.length === 0 && (
                     <tr>
-                      <td colSpan={10} className="text-center py-8 text-text-muted text-sm">
+                      <td colSpan={isSeasonHps(selectedSeason) ? 13 : 11} className="text-center py-8 text-text-muted text-sm">
                         No standings data recorded for this season yet.
                       </td>
                     </tr>
@@ -377,6 +424,15 @@ export default function SeasonsPage() {
             </div>
           </div>
 
+          {/* HPS Explainer Card if this is an HPS season */}
+          {isSeasonHps(selectedSeason) && (
+            <HpsExplainer
+              activeHandicapName={selectedSeason.handicapPlayerName || 'Ashu'}
+              activeHandicapBonus={selectedSeason.handicapBonus ?? 0.75}
+              minMatches={selectedSeason.minMatchesRequired ?? 35}
+              defaultExpanded={false}
+            />
+          )}
         </div>
       )}
     </div>

@@ -6,9 +6,11 @@ import {
   subscribeToSeasons,
   computeSeasonLeaderboard,
   computeAllTimeLeaderboard,
+  isSeasonHps,
 } from '@/lib/seasonDb';
 import { User, Match, Season, SeasonPlayerSnapshot } from '@/lib/types';
 import Link from 'next/link';
+import HpsExplainer from '@/components/HpsExplainer';
 
 type DashTab = 'season' | 'alltime' | 'history';
 
@@ -81,7 +83,10 @@ export default function DashboardPage() {
 
   const getSortedRows = (
     list: SeasonPlayerSnapshot[],
-    mode: 'combined' | 'dream' | 'auth'
+    mode: 'combined' | 'dream' | 'auth',
+    isHps: boolean = false,
+    isCompletedSeason: boolean = false,
+    minReq: number = 35
   ) => {
     return [...list]
       .map((player) => {
@@ -108,12 +113,33 @@ export default function DashboardPage() {
                 points: 0,
               };
 
+        const ppg = stats.matchesPlayed > 0 ? Number((stats.points / stats.matchesPlayed).toFixed(2)) : 0;
+
         return {
           ...player,
-          modeStats: stats,
+          modeStats: {
+            ...stats,
+            ppg,
+          },
         };
       })
       .sort((a, b) => {
+        if (isHps) {
+          // If viewing an ended season, players with >= minReq matches rank first; < minReq moved to bottom
+          if (isCompletedSeason) {
+            const aMet = a.matchesPlayed >= minReq;
+            const bMet = b.matchesPlayed >= minReq;
+            if (aMet !== bMet) return aMet ? -1 : 1;
+          }
+          if ((b.avgHps ?? 0) !== (a.avgHps ?? 0)) return (b.avgHps ?? 0) - (a.avgHps ?? 0);
+          if ((b.totalHps ?? 0) !== (a.totalHps ?? 0)) return (b.totalHps ?? 0) - (a.totalHps ?? 0);
+          if (b.modeStats.points !== a.modeStats.points) return b.modeStats.points - a.modeStats.points;
+          if (b.modeStats.goalDifference !== a.modeStats.goalDifference)
+            return b.modeStats.goalDifference - a.modeStats.goalDifference;
+          return b.modeStats.wins - a.modeStats.wins;
+        }
+
+        // Legacy PTS ranking (Seasons 1 & 2, All-time)
         if (b.modeStats.points !== a.modeStats.points) return b.modeStats.points - a.modeStats.points;
         if (b.modeStats.goalDifference !== a.modeStats.goalDifference)
           return b.modeStats.goalDifference - a.modeStats.goalDifference;
@@ -180,18 +206,28 @@ export default function DashboardPage() {
     badgeColorClass: string,
     pointsColorClass: string,
     rows: SeasonPlayerSnapshot[],
-    mode: 'combined' | 'dream' | 'auth' = 'combined'
+    mode: 'combined' | 'dream' | 'auth' = 'combined',
+    isHps: boolean = false,
+    handicapPlayerId?: string | null,
+    handicapBonus: number = 0.75,
+    isCompletedSeason: boolean = false,
+    minReq: number = 35
   ) => {
-    const sorted = getSortedRows(rows, mode);
+    const sorted = getSortedRows(rows, mode, isHps, isCompletedSeason, minReq);
 
     return (
       <div className="card-glow p-0 overflow-hidden mb-6 bg-bg-card">
-        <div className="p-5 border-b border-border flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="p-5 border-b border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <h2 className="font-heading font-bold text-lg uppercase tracking-wide text-text-primary accent-bar">{title}</h2>
             <span className={`px-2.5 py-0.5 rounded text-[0.65rem] font-heading font-bold uppercase tracking-wider ${badgeColorClass}`}>
               {badgeText}
             </span>
+            {isHps && (
+              <span className="px-2 py-0.5 rounded text-[0.65rem] font-heading font-bold uppercase tracking-wider bg-volt/15 text-volt border border-volt/30">
+                Sorted by Avg HPS
+              </span>
+            )}
           </div>
           <Link href="/users" className="text-xs text-cyan hover:text-cyan-dim font-heading uppercase tracking-wider transition-colors">
             View Players →
@@ -216,6 +252,13 @@ export default function DashboardPage() {
                   <th className="text-center">GA</th>
                   <th className="text-center">GD</th>
                   <th className={`text-center ${pointsColorClass}`}>PTS</th>
+                  <th className="text-center text-cyan">PPG</th>
+                  {isHps && (
+                    <>
+                      <th className="text-center text-text-muted">Total HPS</th>
+                      <th className="text-center text-volt font-black">Avg HPS</th>
+                    </>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -223,37 +266,54 @@ export default function DashboardPage() {
                   const rankColors = ['text-gold', 'text-silver', 'text-bronze'];
                   const s = player.modeStats;
                   const userObj = users.find((u) => u.id === player.userId);
+                  const isHandicap = handicapPlayerId && player.userId === handicapPlayerId;
+                  const isUnderMin = isCompletedSeason && player.matchesPlayed < minReq;
 
                   return (
-                    <tr key={player.userId}>
+                    <tr
+                      key={player.userId}
+                      className={isUnderMin ? 'bg-red/5 opacity-80' : undefined}
+                    >
                       <td>
                         <span className={`font-heading font-black text-lg ${rankColors[idx] || 'text-text-muted'}`}>
                           #{idx + 1}
                         </span>
                       </td>
                       <td>
-                        <Link href={`/users/${player.userId}`} className="flex items-center gap-2.5 group">
-                          <div className="w-7 h-7 rounded-full overflow-hidden bg-bg-card-hover border border-border flex items-center justify-center text-xs font-bold text-text-primary shrink-0">
-                            {userObj?.avatar ? (
-                              <img src={userObj.avatar} alt={player.displayName} className="w-full h-full object-cover" />
-                            ) : (
-                              player.displayName.charAt(0).toUpperCase()
-                            )}
-                          </div>
-                          <div>
-                            <div className="font-heading font-semibold text-sm text-text-primary group-hover:text-volt transition-colors flex items-center gap-1.5">
-                              {player.displayName}
-                              {userObj?.isHost && (
-                                <span className="px-1.5 py-0.2 bg-volt/15 text-volt text-[0.6rem] rounded font-bold">
-                                  HOST
-                                </span>
+                        <div className="flex flex-col">
+                          <Link href={`/users/${player.userId}`} className="flex items-center gap-2.5 group">
+                            <div className="w-7 h-7 rounded-full overflow-hidden bg-bg-card-hover border border-border flex items-center justify-center text-xs font-bold text-text-primary shrink-0">
+                              {userObj?.avatar ? (
+                                <img src={userObj.avatar} alt={player.displayName} className="w-full h-full object-cover" />
+                              ) : (
+                                player.displayName.charAt(0).toUpperCase()
                               )}
                             </div>
-                            {userObj?.teamName && (
-                              <div className="text-[0.65rem] text-text-muted font-mono">{userObj.teamName}</div>
-                            )}
-                          </div>
-                        </Link>
+                            <div>
+                              <div className="font-heading font-semibold text-sm text-text-primary group-hover:text-volt transition-colors flex items-center gap-1.5 flex-wrap">
+                                <span>{player.displayName}</span>
+                                {userObj?.isHost && (
+                                  <span className="px-1.5 py-0.2 bg-volt/15 text-volt text-[0.6rem] rounded font-bold">
+                                    HOST
+                                  </span>
+                                )}
+                                {isHandicap && (
+                                  <span className="px-1.5 py-0.5 rounded text-[0.6rem] font-bold bg-amber-400/20 text-amber-400 border border-amber-400/30">
+                                    ⚡ +{handicapBonus} HPS Boost
+                                  </span>
+                                )}
+                              </div>
+                              {userObj?.teamName && (
+                                <div className="text-[0.65rem] text-text-muted font-mono">{userObj.teamName}</div>
+                              )}
+                            </div>
+                          </Link>
+                          {isUnderMin && (
+                            <span className="text-[0.65rem] text-red font-mono font-bold mt-1">
+                              ⚠️ Minimum Requirements Not Met (&lt;{minReq} matches)
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="text-center text-text-secondary font-mono">{s.matchesPlayed}</td>
                       <td className="text-center text-emerald-400 font-bold font-mono">{s.wins}</td>
@@ -267,10 +327,25 @@ export default function DashboardPage() {
                         </span>
                       </td>
                       <td className="text-center">
-                        <span className={`font-heading font-black text-lg ${pointsColorClass} bg-bg-card px-2.5 py-0.5 rounded border border-border`}>
+                        <span className={`font-heading font-bold text-base ${pointsColorClass} bg-bg-card px-2 py-0.5 rounded border border-border`}>
                           {s.points}
                         </span>
                       </td>
+                      <td className="text-center text-cyan font-mono font-bold">
+                        {s.ppg?.toFixed(2) || '0.00'}
+                      </td>
+                      {isHps && (
+                        <>
+                          <td className="text-center font-mono text-text-muted text-sm">
+                            {(player.totalHps ?? 0).toFixed(2)}
+                          </td>
+                          <td className="text-center">
+                            <span className="font-heading font-black text-lg text-volt bg-volt/15 px-2.5 py-0.5 rounded border border-volt/40 shadow-sm">
+                              {(player.avgHps ?? 0).toFixed(2)}
+                            </span>
+                          </td>
+                        </>
+                      )}
                     </tr>
                   );
                 })}
@@ -298,6 +373,7 @@ export default function DashboardPage() {
       );
     }
 
+    const isHps = isSeasonHps(activeSeason);
     const activeSeasonMatches = matches.filter(
       (m) => m.seasonId === activeSeason.id && (m.status || 'approved') === 'approved'
     );
@@ -306,15 +382,24 @@ export default function DashboardPage() {
 
     return (
       <div className="space-y-6">
+        {/* Active Season Banner */}
         <div className="p-5 rounded-2xl border border-volt/30 bg-volt/5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 mb-1">
               <span className="w-2 h-2 rounded-full bg-volt animate-pulse" />
               <span className="font-heading font-black text-volt text-sm uppercase tracking-widest">Active Season</span>
+              <span className="px-2 py-0.5 rounded-full text-[0.65rem] font-bold bg-volt/15 text-volt border border-volt/30">
+                {isHps ? '⚡ HPS Ranking System' : 'Classic PTS System'}
+              </span>
             </div>
             <h2 className="font-heading font-black text-2xl text-text-primary">{activeSeason.name}</h2>
             <p className="text-text-secondary text-xs mt-0.5">
-              Started: {activeSeason.startedAt ? new Date(activeSeason.startedAt).toLocaleDateString() : 'Unknown'} · {activeSeason.playerIds.length} players
+              Started: {activeSeason.startedAt ? new Date(activeSeason.startedAt).toLocaleDateString() : 'Unknown'} · {activeSeason.playerIds.length} Contenders
+              {isHps && activeSeason.handicapPlayerName && (
+                <span className="text-amber-400 font-bold ml-2">
+                  • Special Power: {activeSeason.handicapPlayerName} (+{activeSeason.handicapBonus ?? 0.75} HPS)
+                </span>
+              )}
             </p>
           </div>
           <div className="text-right">
@@ -323,10 +408,20 @@ export default function DashboardPage() {
               {activeSeasonMatches.length} <span className="text-volt text-sm uppercase">Total</span>
             </p>
             <p className="text-text-muted text-[0.65rem] mt-0.5 font-mono">
-              {casualCount} Casual · {tournCount} Tournament
+              {casualCount} Casual · {tournCount} Tournament · Fluid Season
             </p>
           </div>
         </div>
+
+        {/* eFootball League — HPS Ranking System Explainer Card (embedded) */}
+        {isHps && (
+          <HpsExplainer
+            activeHandicapName={activeSeason.handicapPlayerName || 'Ashu'}
+            activeHandicapBonus={activeSeason.handicapBonus ?? 0.75}
+            minMatches={activeSeason.minMatchesRequired ?? 35}
+            defaultExpanded={false}
+          />
+        )}
 
         {/* Mode switcher bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -345,11 +440,16 @@ export default function DashboardPage() {
             {(seasonMode === 'all' || seasonMode === 'combined') &&
               renderLeaderboardTable(
                 `${activeSeason.name} — Combined Leaderboard`,
-                'All Modes',
+                isHps ? 'All Modes (HPS)' : 'All Modes',
                 'bg-volt/15 text-volt border border-volt/30',
                 'text-volt',
                 seasonLeaderboard,
-                'combined'
+                'combined',
+                isHps,
+                activeSeason.handicapPlayerId,
+                activeSeason.handicapBonus ?? 0.75,
+                false,
+                activeSeason.minMatchesRequired ?? 35
               )}
 
             {(seasonMode === 'all' || seasonMode === 'dream') &&
@@ -359,7 +459,12 @@ export default function DashboardPage() {
                 'bg-cyan/15 text-cyan border border-cyan/30',
                 'text-cyan',
                 seasonLeaderboard,
-                'dream'
+                'dream',
+                isHps,
+                activeSeason.handicapPlayerId,
+                activeSeason.handicapBonus ?? 0.75,
+                false,
+                activeSeason.minMatchesRequired ?? 35
               )}
 
             {(seasonMode === 'all' || seasonMode === 'auth') &&
@@ -369,7 +474,12 @@ export default function DashboardPage() {
                 'bg-purple-500/15 text-purple-400 border border-purple-500/30',
                 'text-purple-400',
                 seasonLeaderboard,
-                'auth'
+                'auth',
+                isHps,
+                activeSeason.handicapPlayerId,
+                activeSeason.handicapBonus ?? 0.75,
+                false,
+                activeSeason.minMatchesRequired ?? 35
               )}
           </div>
         )}
@@ -430,7 +540,16 @@ export default function DashboardPage() {
   const renderHistoryTab = () => {
     if (selectedHistorySeason) {
       const s = selectedHistorySeason;
+      const isHistHps = isSeasonHps(s);
       const snap = s.snapshot ? Object.values(s.snapshot).sort((a, b) => {
+        if (isHistHps) {
+          const aMet = a.meetsMinimumMatches !== false;
+          const bMet = b.meetsMinimumMatches !== false;
+          if (aMet !== bMet) return aMet ? -1 : 1;
+          const aAvg = a.avgHps ?? 0;
+          const bAvg = b.avgHps ?? 0;
+          if (bAvg !== aAvg) return bAvg - aAvg;
+        }
         if (b.points !== a.points) return b.points - a.points;
         if (b.goalDifference !== a.goalDifference) return b.goalDifference - a.goalDifference;
         if (b.goalsFor !== a.goalsFor) return b.goalsFor - a.goalsFor;
@@ -525,11 +644,16 @@ export default function DashboardPage() {
                 {(historyMode === 'all' || historyMode === 'combined') &&
                   renderLeaderboardTable(
                     `${s.name} — Final Combined Standings`,
-                    'Completed',
+                    isHistHps ? 'Completed (HPS)' : 'Completed',
                     'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30',
                     'text-volt',
                     snap,
-                    'combined'
+                    'combined',
+                    isHistHps,
+                    s.handicapPlayerId,
+                    s.handicapBonus ?? 0.75,
+                    true,
+                    s.minMatchesRequired ?? 35
                   )}
 
                 {(historyMode === 'all' || historyMode === 'dream') &&
@@ -539,7 +663,12 @@ export default function DashboardPage() {
                     'bg-cyan/15 text-cyan border border-cyan/30',
                     'text-cyan',
                     snap,
-                    'dream'
+                    'dream',
+                    isHistHps,
+                    s.handicapPlayerId,
+                    s.handicapBonus ?? 0.75,
+                    true,
+                    s.minMatchesRequired ?? 35
                   )}
 
                 {(historyMode === 'all' || historyMode === 'auth') &&
@@ -549,7 +678,12 @@ export default function DashboardPage() {
                     'bg-purple-500/15 text-purple-400 border border-purple-500/30',
                     'text-purple-400',
                     snap,
-                    'auth'
+                    'auth',
+                    isHistHps,
+                    s.handicapPlayerId,
+                    s.handicapBonus ?? 0.75,
+                    true,
+                    s.minMatchesRequired ?? 35
                   )}
               </div>
             </div>
@@ -608,9 +742,30 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-8 animate-fade-in">
-      <div>
-        <h1 className="font-heading font-black text-3xl md:text-4xl tracking-tight">DASH<span className="text-volt">BOARD</span></h1>
-        <p className="text-text-secondary mt-1 text-sm">Real-time overview of your eFootball arena</p>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="font-heading font-black text-3xl md:text-4xl tracking-tight">DASH<span className="text-volt">BOARD</span></h1>
+          <p className="text-text-secondary mt-1 text-sm">Real-time overview of your eFootball arena</p>
+        </div>
+
+        {/* Notices & Alerts Callout */}
+        <Link
+          href="/alerts"
+          className="group flex items-center gap-3 px-4 py-2.5 rounded-xl bg-gradient-to-r from-volt/10 via-volt/5 to-cyan/10 border border-volt/30 hover:border-volt/60 transition-all shadow-lg shadow-volt/5"
+        >
+          <div className="w-8 h-8 rounded-lg bg-volt/20 flex items-center justify-center flex-shrink-0 text-volt group-hover:scale-105 transition-transform">
+            🔔
+          </div>
+          <div className="text-left">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-heading font-bold text-volt uppercase tracking-wider">New System Update</span>
+              <span className="text-[0.6rem] px-1.5 py-0.2 bg-volt text-bg-primary font-black rounded uppercase">NEW</span>
+            </div>
+            <p className="text-xs text-text-secondary group-hover:text-text-primary transition-colors">
+              eFootball League HPS System & Fluid Seasons Active → Read Details
+            </p>
+          </div>
+        </Link>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 stagger-children">

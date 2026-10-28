@@ -53,6 +53,17 @@ const navItems = [
     ),
   },
   {
+    href: '/alerts',
+    label: 'Alerts & Notices',
+    badge: 'NEW',
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+        <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+      </svg>
+    ),
+  },
+  {
     href: '/admin',
     label: 'Admin Portal',
     icon: (
@@ -159,6 +170,11 @@ export default function Sidebar() {
                   {item.icon}
                 </span>
                 <span className="flex-1">{item.label}</span>
+                {'badge' in item && item.badge && (
+                  <span className="px-1.5 py-0.5 text-[0.6rem] font-bold rounded bg-volt text-black">
+                    {item.badge}
+                  </span>
+                )}
                 {item.href === '/admin' && pendingCount > 0 && (
                   <span className="px-2 py-0.5 text-[0.65rem] font-bold rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/40 animate-pulse">
                     {pendingCount}
